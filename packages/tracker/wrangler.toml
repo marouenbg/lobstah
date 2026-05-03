@@ -1,0 +1,29 @@
+# Cloudflare Workers config for the lobstah tracker.
+#
+# Quick deploy (anyone can run their own tracker):
+#
+#   pnpm install -g wrangler        # or use npx
+#   wrangler login                  # opens browser
+#   wrangler kv:namespace create REGISTRY
+#   # paste the returned id into [[kv_namespaces]] below
+#   wrangler deploy
+#
+# Free tier covers the expected load (KV: 100k reads/day, 1k writes/day).
+# Each peer's heartbeat is 1 write per ~150s (~600 writes/day per active
+# peer); a tracker with ~3 active peers fits comfortably in free tier.
+# For higher traffic, upgrade to Workers Paid ($5/mo) for unlimited writes.
+
+name = "lobstah-tracker"
+main = "src/worker.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+# After `wrangler kv:namespace create REGISTRY`, paste the id here:
+[[kv_namespaces]]
+binding = "REGISTRY"
+id = "PASTE_KV_NAMESPACE_ID_HERE"
+
+# Optional: if you want a custom domain like tracker.lobstah.dev, add a route:
+# [[routes]]
+# pattern = "tracker.lobstah.dev/*"
+# zone_name = "lobstah.dev"
