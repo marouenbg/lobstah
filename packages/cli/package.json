@@ -1,0 +1,21 @@
+{
+  "name": "@lobstah/cli",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "lobstah": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc && chmod +x dist/index.js",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@lobstah/engine-ollama": "workspace:*",
+    "@lobstah/ledger": "workspace:*",
+    "@lobstah/protocol": "workspace:*",
+    "@lobstah/router": "workspace:*",
+    "@lobstah/tracker": "workspace:*",
+    "@lobstah/worker": "workspace:*"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "lobstah",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Distributed LLM inference grid for Apple Mac. The lobster way.",
+  "packageManager": "pnpm@9.12.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm -r --parallel dev",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lobstah": "node packages/cli/dist/index.js"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
