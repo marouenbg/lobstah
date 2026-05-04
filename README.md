@@ -1,8 +1,8 @@
 # 🦞 Lobstah
 
-> Distributed P2P LLM inference grid for Apple Mac mini. The lobstah way.
+> Async LLM compute exchange for agent fleets and batch workloads. Trade tokens with friends' Mac minis instead of paying OpenAI rates. **Cargo, not air freight.**
 
-Lobstah is a federated peer-to-peer compute grid for LLM inference, modeled on the electrical grid. Contribute spare compute when you have it, earn signed credits. Spend credits when you need extra compute. No central authority owns the ledger; receipts are signed by the providing worker and accumulate on every participant's local log.
+Lobstah is a federated peer-to-peer compute exchange for LLM inference. Contribute spare compute when you have it, earn signed token credits. Spend credits when you need extra compute someone else has. No central authority owns the ledger; receipts are signed by the providing worker and accumulate on every participant's local log.
 
 **Status: pre-alpha.** Tested end-to-end across machines (cross-region streaming, signed receipts, replay protection, multi-peer routing with failover, **discovery via the public Nostr relay network**). [Published on npm](https://www.npmjs.com/org/lobstah) under the `@lobstah/*` scope.
 
@@ -10,7 +10,29 @@ Lobstah is a federated peer-to-peer compute grid for LLM inference, modeled on t
 npm install -g @lobstah/cli
 ```
 
-## Why
+## Why (and where it fits — and where it doesn't)
+
+OpenAI / Anthropic are purpose-built for low-latency single-user chat. They run on H100s, in regions optimized for users, with pre-warmed models. **Lobstah does not compete on first-token latency.** A consumer-grade Mac mini will always be 3-10× slower than a hyperscaler API for an interactive chat.
+
+What lobstah is good at: **workloads where the LLM is being driven by another program, not a human waiting**.
+
+| 🦞 Good fit for lobstah | ❌ Not a good fit |
+|---|---|
+| Overnight research agent ("read these 50 papers and write a literature review") | Real-time chat, voice agents, latency-critical APIs |
+| Multi-step agentic plans (plan → execute → reflect → retry; often 50-500 LLM calls) | Single user staring at a token cursor |
+| Bulk document processing (summarize 10k PDFs across the day) | Anything where p99 latency matters more than p50 cost |
+| Multi-agent collaborative systems (CrewAI, AutoGen, LangGraph internal "thinking" calls) | Production-graded SLA-bound services |
+| Synthetic data generation for fine-tuning | |
+| Code review bots, CI agents, continuous monitoring | |
+| Game NPCs / simulations | |
+| Anything you'd send to OpenAI's [Batch API](https://platform.openai.com/docs/guides/batch) | |
+
+The pattern: **the LLM is a worker in someone else's pipeline, not a chat partner.** No human is staring at a token cursor.
+
+**Concrete example.** A research agent says: *"Read these 50 papers and produce a literature review."*
+
+- **OpenAI today:** $5-20 of API credit, 30 minutes wall-clock, your data leaves your network
+- **Lobstah way:** posts 50 jobs to the network. Friend's Mac in Vancouver picks up 12 of them overnight (you're asleep). Friend's Mac in Berlin picks up 18. Your own machine grabs 20. 6 hours later you wake up to: signed completions for all 50, receipts in your ledger showing you owe Vancouver-friend ~3,000 tokens of compute and Berlin-friend ~5,000 tokens. Tomorrow they ask you to run a similar job and you "pay back" with your idle compute.
 
 LLM inference is bursty. A 32GB Mac mini idle most of the day could be serving someone else's `llama3.1:8b` queries; in exchange, when you need compute beyond what your hardware supports, you draw from the grid. Token-usage receipts are the meter, the federated ledger is the settlement layer, and discovery rides on top of [Nostr](https://nostr.com) so the project owns no infrastructure.
 
@@ -142,6 +164,9 @@ lobstah worker start \
 - [x] openclaw plugin wrapper (custom auth + onboarding wizard prompts)
 - [x] npm publish under `@lobstah/*` ([@lobstah/cli](https://www.npmjs.com/package/@lobstah/cli) + 7 sibling packages)
 - [ ] ClawHub listing
+- [ ] **Async job API** (`POST /v1/jobs` + status polling + OpenAI Batch-compatible endpoint) — the natural fit for cargo workloads
+- [ ] Latency-tier announcements (workers advertise expected p50 first-token latency: `interactive` / `batch` / `best-effort`)
+- [ ] Nostr-result-delivery for fully async jobs (worker DMs result back via Nostr; consumer doesn't need to be online when worker delivers)
 - [ ] Model-weighted credit pricing (replace today's flat 1-token=1-credit)
 - [ ] Worker-side load shedding (real `queueDepth` from the engine)
 - [ ] NAT traversal (relay path for peers behind NATs)
