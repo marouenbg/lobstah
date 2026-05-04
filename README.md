@@ -165,12 +165,12 @@ lobstah worker start \
 - [x] npm publish under `@lobstah/*` ([@lobstah/cli](https://www.npmjs.com/package/@lobstah/cli) + 7 sibling packages)
 - [ ] ClawHub listing
 - [x] **Async job API** (`POST /v1/jobs` + `GET /v1/jobs/:id` + `DELETE /v1/jobs/:id`) — submit-and-poll for cargo workloads. Worker maintains an in-memory FIFO queue with TTL eviction; router maps client-facing job ids to peer + worker-job-id; signed receipts ledgered on first `done` poll (nonce dedupe protects repeats)
-- [ ] OpenAI Batch-API compatibility (alias `/v1/batches` mapping to a list of `/v1/jobs`)
-- [ ] Latency-tier announcements (workers advertise expected p50 first-token latency: `interactive` / `batch` / `best-effort`)
-- [ ] Nostr-result-delivery for fully async jobs (worker DMs result back via Nostr; consumer doesn't need to be online when worker delivers)
+- [x] **Job persistence** — JSONL append log (default `~/.lobstah/jobs.jsonl`); on restart the worker hydrates done/queued/error jobs and requeues anything that was `running` mid-crash (nonce dedupe protects any receipt that may have leaked out)
+- [x] **Latency-tier announcements** — workers self-tag as `interactive` / `batch` / `best-effort` via `--tier` (default `best-effort`); the tier rides in the signed announcement + `/capacity`; routers bias chat completions toward `interactive` peers and async `/v1/jobs` toward `batch` peers, falling back to any tier if none match
+- [x] **Worker-side concurrent jobs** — `lobstah worker start --concurrency N` runs up to N jobs from the queue in parallel (default 1, preserves the historic single-FIFO behavior); reported in `/capacity`. Useful when the underlying engine can serve more than one inference at once, or when the worker is fronting multiple engines
+- [ ] **Nostr-result-delivery** for fully async jobs (worker DMs result back via Nostr; consumer doesn't need to be online when worker delivers — the unique pattern OpenAI literally can't do)
 - [ ] Model-weighted credit pricing (replace today's flat 1-token=1-credit)
-- [ ] Worker-side load shedding (real `queueDepth` from the engine)
-- [ ] NAT traversal (relay path for peers behind NATs)
+- [ ] NAT traversal (relay path for peers behind NATs without port forwarding)
 - [ ] Adversarial trust model (redundant execution + reputation)
 - [ ] Web dashboard
 

@@ -115,6 +115,34 @@ describe("worker streaming SSE contract", () => {
     expect(signed.receipt.nonce).toMatch(/^[0-9a-f]{32}$/);
   });
 
+  it("/capacity reflects the configured tier (defaults to best-effort)", async () => {
+    const worker = generateIdentity();
+    const engine: WorkerEngine = {
+      name: "mock",
+      listModels: async () => ["llama3.1:8b"],
+      chat: async () => ({
+        payload: {},
+        inputTokens: 0,
+        outputTokens: 0,
+      }),
+      chatStream: async () => {
+        throw new Error("not used");
+      },
+    };
+
+    const defaulted = buildWorkerApp({ identity: worker, engine });
+    const r1 = await defaulted.app.fetch(new Request("http://localhost/capacity"));
+    const c1 = (await r1.json()) as { tier?: string };
+    expect(c1.tier).toBe("best-effort");
+    defaulted.jobs.shutdown();
+
+    const tagged = buildWorkerApp({ identity: worker, engine, tier: "batch" });
+    const r2 = await tagged.app.fetch(new Request("http://localhost/capacity"));
+    const c2 = (await r2.json()) as { tier?: string };
+    expect(c2.tier).toBe("batch");
+    tagged.jobs.shutdown();
+  });
+
   it("non-streaming path returns receipt as header", async () => {
     const worker = generateIdentity();
     const requester = generateIdentity();

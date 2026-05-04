@@ -5,6 +5,7 @@ import {
   announcementStatus,
   formatPubkey,
   generateIdentity,
+  isWorkerTier,
   signAnnouncement,
   verifyAnnouncement,
 } from "./index.js";
@@ -84,5 +85,40 @@ describe("announcementStatus", () => {
   it("ok when slightly ahead within skew window", () => {
     const a = sample("lob1a", { announcedAt: 1_001_000, ttlSeconds: 60 });
     expect(announcementStatus(a, 1_000_000)).toBe("ok");
+  });
+});
+
+describe("worker tier", () => {
+  it("isWorkerTier accepts the three valid values", () => {
+    expect(isWorkerTier("interactive")).toBe(true);
+    expect(isWorkerTier("batch")).toBe(true);
+    expect(isWorkerTier("best-effort")).toBe(true);
+  });
+
+  it("isWorkerTier rejects everything else", () => {
+    expect(isWorkerTier("Interactive")).toBe(false);
+    expect(isWorkerTier("")).toBe(false);
+    expect(isWorkerTier(undefined)).toBe(false);
+    expect(isWorkerTier(null)).toBe(false);
+    expect(isWorkerTier(7)).toBe(false);
+  });
+
+  it("signed announcement round-trips with a tier field", () => {
+    const id = generateIdentity();
+    const a = sample(formatPubkey(id.publicKey), { tier: "batch" });
+    const signed = signAnnouncement(a, id.secretKey);
+    expect(verifyAnnouncement(signed)).toBe(true);
+    expect(signed.announcement.tier).toBe("batch");
+  });
+
+  it("tampering the tier breaks the signature", () => {
+    const id = generateIdentity();
+    const a = sample(formatPubkey(id.publicKey), { tier: "best-effort" });
+    const signed = signAnnouncement(a, id.secretKey);
+    const tampered = {
+      ...signed,
+      announcement: { ...signed.announcement, tier: "interactive" as const },
+    };
+    expect(verifyAnnouncement(tampered)).toBe(false);
   });
 });

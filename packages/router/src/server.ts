@@ -22,7 +22,7 @@ import { streamSSE } from "hono/streaming";
 import { noteNonce } from "./nonce-store.js";
 import { getCapacity, markFailed, markSucceeded } from "./peer-state.js";
 import { loadPeers, type Peer } from "./peers.js";
-import { candidatesForModel, orderCandidates } from "./pick.js";
+import { candidatesForModel, orderCandidates, preferTier } from "./pick.js";
 
 const blockPrivateNetwork = (): boolean =>
   process.env.LOBSTAH_BLOCK_PRIVATE_ADDRS === "1";
@@ -230,7 +230,11 @@ export const buildRouterApp = (opts: BuildRouterAppOptions): RouterApp => {
       );
     }
 
-    const ordered = orderCandidates(candidates);
+    // Streaming chat completions are interactive-shaped: the client (or
+    // their downstream user) is waiting on tokens. Bias toward peers that
+    // self-tagged "interactive" but fall through if none exist.
+    const tierPreferred = await preferTier(candidates, "interactive");
+    const ordered = orderCandidates(tierPreferred);
     const { upstream, peer, errors } = await openUpstreamWithFallback(
       ordered,
       parsed.data,
@@ -322,7 +326,12 @@ export const buildRouterApp = (opts: BuildRouterAppOptions): RouterApp => {
         503,
       );
     }
-    const ordered = orderCandidates(candidates);
+    // Job submissions are cargo-shaped — the caller has already accepted
+    // that the work runs out-of-band. Prefer "batch" peers; fall back to
+    // any tier so we still place the work somewhere if no batch peer is
+    // reachable.
+    const tierPreferred = await preferTier(candidates, "batch");
+    const ordered = orderCandidates(tierPreferred);
 
     const policy = { blockPrivateNetwork: blockPrivateNetwork() };
     const errors: { peer: string; message: string }[] = [];

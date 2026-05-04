@@ -1,9 +1,12 @@
-import { assertSafeUrl } from "@lobstah/protocol";
+import { assertSafeUrl, type WorkerTier } from "@lobstah/protocol";
 import type { Peer } from "./peers.js";
 
 export type PeerCapacity = {
   pubkey: string;
   models: string[];
+  // Optional for back-compat: workers on older versions don't return this
+  // field, and routers default them to "best-effort" via pick-time logic.
+  tier?: WorkerTier;
   queueDepth: number;
 };
 

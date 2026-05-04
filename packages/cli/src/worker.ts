@@ -1,13 +1,16 @@
 import {
   type Announcement,
+  DEFAULT_WORKER_TIER,
   defaultIdentityPath,
   formatPubkey,
   fromHex,
   type Identity,
+  isWorkerTier,
   loadOrCreateIdentity,
   signAnnouncement,
   sign,
   toHex,
+  type WorkerTier,
 } from "@lobstah/protocol";
 import {
   DEFAULT_RELAYS,
@@ -42,6 +45,7 @@ const announceOnce = async (
   label: string,
   ttlSeconds: number,
   models: string[],
+  tier: WorkerTier,
 ): Promise<{ ok: boolean; error?: string }> => {
   const announcement: Announcement = {
     version: 1,
@@ -49,6 +53,7 @@ const announceOnce = async (
     url: announceUrl,
     label,
     models,
+    tier,
     ttlSeconds,
     announcedAt: Date.now(),
   };
@@ -95,6 +100,7 @@ const announceViaNostr = async (
   label: string,
   ttlSeconds: number,
   models: string[],
+  tier: WorkerTier,
   relays: ReadonlyArray<string>,
 ): Promise<{ ok: boolean; eventId?: string; accepted?: string[]; error?: string }> => {
   const announcement: Announcement = {
@@ -103,6 +109,7 @@ const announceViaNostr = async (
     url: announceUrl,
     label,
     models,
+    tier,
     ttlSeconds,
     announcedAt: Date.now(),
   };
@@ -141,6 +148,24 @@ export const worker = async (args: string[]): Promise<void> => {
   const announceTtl = Number(flag(args, "--announce-ttl") ?? "300");
   const publishViaNostr = args.includes("--publish-via-nostr");
   const nostrRelays = flagAll(args, "--nostr-relay");
+  const tierArg = flag(args, "--tier") ?? DEFAULT_WORKER_TIER;
+  if (!isWorkerTier(tierArg)) {
+    process.stderr.write(
+      `--tier must be one of: interactive, batch, best-effort (got "${tierArg}")\n`,
+    );
+    process.exit(2);
+  }
+  const tier: WorkerTier = tierArg;
+  const concurrencyArg = flag(args, "--concurrency");
+  const concurrency = concurrencyArg ? Number(concurrencyArg) : undefined;
+  if (concurrencyArg !== undefined) {
+    if (!Number.isInteger(concurrency) || (concurrency as number) < 1) {
+      process.stderr.write(
+        `--concurrency must be a positive integer (got "${concurrencyArg}")\n`,
+      );
+      process.exit(2);
+    }
+  }
   const port = portArg ? Number(portArg) : undefined;
 
   if (announceTo && !announceUrl) {
@@ -160,7 +185,7 @@ export const worker = async (args: string[]): Promise<void> => {
   const pk = formatPubkey(identity.publicKey);
   const npub = formatNostrNpub(identity.nostrPublicKey);
 
-  const w = await startWorker({ identity, port, host: hostArg });
+  const w = await startWorker({ identity, port, host: hostArg, tier, concurrency });
 
   const effectiveHost = hostArg ?? "127.0.0.1";
   const isPublicHost = effectiveHost === "0.0.0.0" || effectiveHost === "::";
@@ -177,6 +202,8 @@ export const worker = async (args: string[]): Promise<void> => {
   process.stdout.write(`  lobstah:  ${pk}\n`);
   process.stdout.write(`  nostr:    ${npub}\n`);
   process.stdout.write(`  engine:   ${w.engine}\n`);
+  process.stdout.write(`  tier:     ${w.tier}\n`);
+  process.stdout.write(`  jobs:     up to ${w.concurrency} in parallel\n`);
   process.stdout.write(`  ollama:   ${process.env.OLLAMA_HOST ?? "http://127.0.0.1:11434"}\n`);
 
   if ((announceTo || publishViaNostr) && !isPublicHost) {
@@ -196,6 +223,7 @@ export const worker = async (args: string[]): Promise<void> => {
       announceLabel,
       announceTtl,
       models,
+      tier,
     );
     process.stdout.write(
       `  tracker:  ${announceTo}  ${first.ok ? `(announced as ${announceUrl})` : `(FAILED: ${first.error})`}\n`,
@@ -211,6 +239,7 @@ export const worker = async (args: string[]): Promise<void> => {
           announceLabel,
           announceTtl,
           m,
+          tier,
         );
         if (!r.ok) process.stderr.write(`tracker heartbeat FAILED: ${r.error}\n`);
       })();
@@ -230,6 +259,7 @@ export const worker = async (args: string[]): Promise<void> => {
       announceLabel,
       announceTtl,
       models,
+      tier,
       activeNostrRelays,
     );
     if (first.ok && first.eventId) {
@@ -251,6 +281,7 @@ export const worker = async (args: string[]): Promise<void> => {
           announceLabel,
           announceTtl,
           m,
+          tier,
           activeNostrRelays,
         );
         if (r.ok && r.eventId) {

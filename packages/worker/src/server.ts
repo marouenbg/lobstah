@@ -3,12 +3,14 @@ import { type WorkerEngine, OllamaEngine } from "@lobstah/engine-ollama";
 import { append as appendLedger } from "@lobstah/ledger";
 import {
   ChatCompletionRequestSchema,
+  DEFAULT_WORKER_TIER,
   type Identity,
   JobSubmitRequestSchema,
   RECEIPT_HEADER,
   RECEIPT_SSE_PREFIX,
   REQUESTER_HEADER,
   type Receipt,
+  type WorkerTier,
   formatPubkey,
   generateNonce,
   signReceipt,
@@ -23,24 +25,32 @@ export type WorkerOptions = {
   port?: number;
   host?: string;
   engine?: WorkerEngine;
+  tier?: WorkerTier;
+  concurrency?: number;
 };
 
 export type RunningWorker = {
   port: number;
   pubkey: string;
   engine: string;
+  tier: WorkerTier;
+  concurrency: number;
   stop: () => Promise<void>;
 };
 
 export type BuildWorkerAppOptions = {
   identity: Identity;
   engine?: WorkerEngine;
+  tier?: WorkerTier;
+  concurrency?: number;
 };
 
 export type WorkerApp = {
   app: Hono;
   pubkey: string;
   engine: string;
+  tier: WorkerTier;
+  concurrency: number;
   jobs: JobStore;
 };
 
@@ -48,6 +58,7 @@ const DEFAULT_PORT = 17474;
 
 export const buildWorkerApp = (opts: BuildWorkerAppOptions): WorkerApp => {
   const engine: WorkerEngine = opts.engine ?? new OllamaEngine();
+  const tier: WorkerTier = opts.tier ?? DEFAULT_WORKER_TIER;
   const workerPubkey = formatPubkey(opts.identity.publicKey);
 
   const buildReceipt = (
@@ -70,7 +81,11 @@ export const buildWorkerApp = (opts: BuildWorkerAppOptions): WorkerApp => {
     completedAt: Date.now(),
   });
 
-  const jobs = new JobStore({ identity: opts.identity, engine });
+  const jobs = new JobStore({
+    identity: opts.identity,
+    engine,
+    concurrency: opts.concurrency,
+  });
   const app = new Hono();
 
   app.get("/", (c) => c.text("lobstah-worker\n"));
@@ -82,6 +97,8 @@ export const buildWorkerApp = (opts: BuildWorkerAppOptions): WorkerApp => {
     return c.json({
       pubkey: workerPubkey,
       models,
+      tier,
+      concurrency: jobs.getConcurrency(),
       queueDepth: counts.queued + counts.running,
       jobCounts: counts,
     });
@@ -217,7 +234,14 @@ export const buildWorkerApp = (opts: BuildWorkerAppOptions): WorkerApp => {
     return c.json({ jobId: id, status: "error", error: { type: "cancelled" } });
   });
 
-  return { app, pubkey: workerPubkey, engine: engine.name, jobs };
+  return {
+    app,
+    pubkey: workerPubkey,
+    engine: engine.name,
+    tier,
+    concurrency: jobs.getConcurrency(),
+    jobs,
+  };
 };
 
 export const startWorker = async (opts: WorkerOptions): Promise<RunningWorker> => {
@@ -227,17 +251,36 @@ export const startWorker = async (opts: WorkerOptions): Promise<RunningWorker> =
   // silently expose local compute to the LAN. Operators who want network
   // exposure must pass --host explicitly (e.g. `--host 0.0.0.0`).
   const host = opts.host ?? "127.0.0.1";
-  const built = buildWorkerApp({ identity: opts.identity, engine: opts.engine });
+  const built = buildWorkerApp({
+    identity: opts.identity,
+    engine: opts.engine,
+    tier: opts.tier,
+    concurrency: opts.concurrency,
+  });
+
+  // Recover any persisted jobs from a prior run (queued + running both end
+  // up requeued — fresh receipts will be issued on completion, with nonce
+  // dedupe protecting any old receipts that may have leaked out).
+  const hydrated = await built.jobs.hydrate();
+  if (hydrated.loaded > 0) {
+    process.stdout.write(
+      `  recovered ${hydrated.loaded} job(s) from log (${hydrated.requeued} requeued, ${hydrated.droppedExpired} expired)\n`,
+    );
+  }
+
   const server = serve({ fetch: built.app.fetch, hostname: host, port });
   return {
     port,
     pubkey: built.pubkey,
     engine: built.engine,
-    stop: () =>
-      new Promise<void>((resolve, reject) => {
-        built.jobs.shutdown();
+    tier: built.tier,
+    concurrency: built.concurrency,
+    stop: async () => {
+      await built.jobs.shutdown();
+      await new Promise<void>((resolve, reject) => {
         server.close((err) => (err ? reject(err) : resolve()));
-      }),
+      });
+    },
   };
 };
 
