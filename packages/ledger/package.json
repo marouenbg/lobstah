@@ -13,5 +13,37 @@
   },
   "dependencies": {
     "@lobstah/protocol": "workspace:*"
+  },
+  "description": "Append-only signed-receipt log + balance computation for the Lobstah grid.",
+  "license": "MIT",
+  "author": "Marouen Ben Guebila <marouen.b.guebila@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/marouenbg/lobstah.git",
+    "directory": "packages/ledger"
+  },
+  "bugs": {
+    "url": "https://github.com/marouenbg/lobstah/issues"
+  },
+  "homepage": "https://github.com/marouenbg/lobstah/tree/main/packages/ledger#readme",
+  "keywords": [
+    "lobstah",
+    "p2p",
+    "decentralized",
+    "mac-mini",
+    "ledger",
+    "accounting",
+    "credit"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
   }
 }

@@ -18,5 +18,37 @@
     "@lobstah/tracker": "workspace:*",
     "@lobstah/transport-nostr": "workspace:*",
     "@lobstah/worker": "workspace:*"
+  },
+  "description": "Lobstah CLI: keygen, worker start, router start, tracker start, peers add/remove/list/sync/gossip-nostr, balance.",
+  "license": "MIT",
+  "author": "Marouen Ben Guebila <marouen.b.guebila@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/marouenbg/lobstah.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/marouenbg/lobstah/issues"
+  },
+  "homepage": "https://github.com/marouenbg/lobstah/tree/main/packages/cli#readme",
+  "keywords": [
+    "lobstah",
+    "p2p",
+    "decentralized",
+    "mac-mini",
+    "cli",
+    "ollama",
+    "llm-inference"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
   }
 }

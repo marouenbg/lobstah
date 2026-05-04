@@ -18,5 +18,37 @@
   },
   "devDependencies": {
     "@types/ws": "^8.5.0"
+  },
+  "description": "Nostr-based peer discovery for Lobstah: publish, subscribe, NIP-09 unannounce. Wraps nostr-tools.",
+  "license": "MIT",
+  "author": "Marouen Ben Guebila <marouen.b.guebila@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/marouenbg/lobstah.git",
+    "directory": "packages/transport-nostr"
+  },
+  "bugs": {
+    "url": "https://github.com/marouenbg/lobstah/issues"
+  },
+  "homepage": "https://github.com/marouenbg/lobstah/tree/main/packages/transport-nostr#readme",
+  "keywords": [
+    "lobstah",
+    "p2p",
+    "decentralized",
+    "mac-mini",
+    "nostr",
+    "peer-discovery",
+    "pubsub"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
   }
 }

@@ -13,5 +13,37 @@
   },
   "dependencies": {
     "@lobstah/protocol": "workspace:*"
+  },
+  "description": "Ollama adapter and WorkerEngine interface for Lobstah workers (chat + streaming chat).",
+  "license": "MIT",
+  "author": "Marouen Ben Guebila <marouen.b.guebila@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/marouenbg/lobstah.git",
+    "directory": "packages/engine-ollama"
+  },
+  "bugs": {
+    "url": "https://github.com/marouenbg/lobstah/issues"
+  },
+  "homepage": "https://github.com/marouenbg/lobstah/tree/main/packages/engine-ollama#readme",
+  "keywords": [
+    "lobstah",
+    "p2p",
+    "decentralized",
+    "mac-mini",
+    "ollama",
+    "llm-inference",
+    "openai-compat"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
   }
 }

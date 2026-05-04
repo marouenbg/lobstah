@@ -4,7 +4,11 @@
 
 Lobstah is a federated peer-to-peer compute grid for LLM inference, modeled on the electrical grid. Contribute spare compute when you have it, earn signed credits. Spend credits when you need extra compute. No central authority owns the ledger; receipts are signed by the providing worker and accumulate on every participant's local log.
 
-**Status: pre-alpha.** Tested end-to-end across machines (cross-region streaming, signed receipts, replay protection, multi-peer routing with failover, **discovery via the public Nostr relay network**). Not yet published to npm or ClawHub.
+**Status: pre-alpha.** Tested end-to-end across machines (cross-region streaming, signed receipts, replay protection, multi-peer routing with failover, **discovery via the public Nostr relay network**). [Published on npm](https://www.npmjs.com/org/lobstah) under the `@lobstah/*` scope.
+
+```sh
+npm install -g @lobstah/cli
+```
 
 ## Why
 
@@ -48,21 +52,20 @@ client  ──/v1/chat/...──► lobstah-router ──forwards──► picke
 ## Quickstart (Nostr discovery — the canonical path)
 
 ```sh
-git clone https://github.com/marouenbg/lobstah.git
-cd lobstah
-corepack pnpm install
-corepack pnpm -r build
+npm install -g @lobstah/cli
 
 # generate identity (lobstah Ed25519 + Nostr Schnorr keys)
-node packages/cli/dist/index.js keygen
+lobstah keygen
 # → lobstah: lob1abc...   (signs receipts + announcements)
 # → nostr:   npub1xyz...  (signs Nostr-event envelopes for transport)
 ```
 
+(Alternative: clone the repo + `pnpm install && pnpm -r build` to run from source.)
+
 **Provider** (contributes compute):
 
 ```sh
-node packages/cli/dist/index.js worker start \
+lobstah worker start \
     --host 0.0.0.0 \
     --publish-via-nostr \
     --announce-url http://your-reachable-host:17474 \
@@ -75,11 +78,11 @@ node packages/cli/dist/index.js worker start \
 
 ```sh
 # pull current peer list from Nostr (one-shot, ~10s to drain relay buffers)
-node packages/cli/dist/index.js peers gossip-nostr
+lobstah peers gossip-nostr
 # → received N valid announcement(s); merged into peers.json
 
 # start the router
-node packages/cli/dist/index.js router start
+lobstah router start
 
 # request via OpenAI-compatible API
 curl -s -X POST http://127.0.0.1:17475/v1/chat/completions \
@@ -88,7 +91,7 @@ curl -s -X POST http://127.0.0.1:17475/v1/chat/completions \
          "messages":[{"role":"user","content":"hi"}]}'
 
 # check your ledger
-node packages/cli/dist/index.js balance
+lobstah balance
 ```
 
 Custom relays: pass `--nostr-relay wss://your-preferred-relay` (repeatable) on either side.
@@ -96,10 +99,10 @@ Custom relays: pass `--nostr-relay wss://your-preferred-relay` (repeatable) on e
 ## Quickstart (local-only, no discovery)
 
 ```sh
-node packages/cli/dist/index.js keygen
-node packages/cli/dist/index.js worker start                    # terminal 1
-node packages/cli/dist/index.js peers add <worker-pubkey> http://127.0.0.1:17474
-node packages/cli/dist/index.js router start                    # terminal 2
+lobstah keygen
+lobstah worker start                    # terminal 1
+lobstah peers add <worker-pubkey> http://127.0.0.1:17474
+lobstah router start                    # terminal 2
 ```
 
 ## Quickstart (centralized HTTP tracker fallback)
@@ -108,10 +111,10 @@ For environments where Nostr WebSockets are blocked (some corporate networks). A
 
 ```sh
 # discover via HTTP tracker
-node packages/cli/dist/index.js peers sync https://your-tracker.example.com
+lobstah peers sync https://your-tracker.example.com
 
 # advertise via HTTP tracker
-node packages/cli/dist/index.js worker start \
+lobstah worker start \
     --announce-to https://your-tracker.example.com \
     --announce-url http://your-host:17474
 ```
@@ -137,7 +140,7 @@ node packages/cli/dist/index.js worker start \
 - [x] **Discovery via Nostr relays — fully P2P, zero infrastructure to operate**
 - [x] URL-safety / SSRF defenses (loopback, link-local, metadata)
 - [x] openclaw plugin wrapper (custom auth + onboarding wizard prompts)
-- [ ] npm publish under `@lobstah/*`
+- [x] npm publish under `@lobstah/*` ([@lobstah/cli](https://www.npmjs.com/package/@lobstah/cli) + 7 sibling packages)
 - [ ] ClawHub listing
 - [ ] Model-weighted credit pricing (replace today's flat 1-token=1-credit)
 - [ ] Worker-side load shedding (real `queueDepth` from the engine)
