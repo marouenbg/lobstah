@@ -15,8 +15,16 @@ import {
 
 const PROVIDER_ID = "lobstah";
 
-async function loadProviderSetup() {
-  return await import("openclaw/plugin-sdk/provider-setup");
+// The plugin-sdk surface is intentionally typed wide — the real bindings
+// are wired up by the openclaw runtime at install time, not at compile
+// time. See openclaw-shims.d.ts for the rationale.
+async function loadProviderSetup(): Promise<Record<string, unknown> & {
+  promptAndConfigureOpenAICompatibleSelfHostedProviderAuth?: (...args: unknown[]) => unknown;
+  configureOpenAICompatibleSelfHostedProviderNonInteractive?: (...args: unknown[]) => unknown;
+  discoverOpenAICompatibleSelfHostedProvider?: (...args: unknown[]) => unknown;
+}> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (await import("openclaw/plugin-sdk/provider-setup")) as any;
 }
 
 const INTRO_NOTE = [

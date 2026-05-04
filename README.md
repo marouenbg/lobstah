@@ -163,7 +163,7 @@ lobstah worker start \
 - [x] URL-safety / SSRF defenses (loopback, link-local, metadata)
 - [x] openclaw plugin wrapper (custom auth + onboarding wizard prompts)
 - [x] npm publish under `@lobstah/*` ([@lobstah/cli](https://www.npmjs.com/package/@lobstah/cli) + 7 sibling packages)
-- [ ] ClawHub listing
+- [x] ClawHub listing — [@lobstah/openclaw-provider](https://clawhub.ai/plugins/@lobstah/openclaw-provider) (community channel)
 - [x] **Async job API** (`POST /v1/jobs` + `GET /v1/jobs/:id` + `DELETE /v1/jobs/:id`) — submit-and-poll for cargo workloads. Worker maintains an in-memory FIFO queue with TTL eviction; router maps client-facing job ids to peer + worker-job-id; signed receipts ledgered on first `done` poll (nonce dedupe protects repeats)
 - [x] **Job persistence** — JSONL append log (default `~/.lobstah/jobs.jsonl`); on restart the worker hydrates done/queued/error jobs and requeues anything that was `running` mid-crash (nonce dedupe protects any receipt that may have leaked out)
 - [x] **Latency-tier announcements** — workers self-tag as `interactive` / `batch` / `best-effort` via `--tier` (default `best-effort`); the tier rides in the signed announcement + `/capacity`; routers bias chat completions toward `interactive` peers and async `/v1/jobs` toward `batch` peers, falling back to any tier if none match

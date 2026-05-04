@@ -30,11 +30,15 @@
   "publishConfig": {
     "access": "public"
   },
+  "scripts": {
+    "build": "tsc"
+  },
   "files": [
     "index.ts",
     "api.ts",
     "defaults.ts",
     "models.ts",
+    "dist",
     "openclaw.plugin.json",
     "README.md",
     "LICENSE"
@@ -42,6 +46,9 @@
   "openclaw": {
     "extensions": [
       "./index.ts"
+    ],
+    "runtimeExtensions": [
+      "./dist/index.js"
     ],
     "install": {
       "npmSpec": "@lobstah/openclaw-provider",
