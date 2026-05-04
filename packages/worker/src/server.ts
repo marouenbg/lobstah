@@ -4,6 +4,7 @@ import { append as appendLedger } from "@lobstah/ledger";
 import {
   ChatCompletionRequestSchema,
   type Identity,
+  JobSubmitRequestSchema,
   RECEIPT_HEADER,
   RECEIPT_SSE_PREFIX,
   REQUESTER_HEADER,
@@ -15,6 +16,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
+import { JobStore } from "./jobs.js";
 
 export type WorkerOptions = {
   identity: Identity;
@@ -39,6 +41,7 @@ export type WorkerApp = {
   app: Hono;
   pubkey: string;
   engine: string;
+  jobs: JobStore;
 };
 
 const DEFAULT_PORT = 17474;
@@ -67,6 +70,7 @@ export const buildWorkerApp = (opts: BuildWorkerAppOptions): WorkerApp => {
     completedAt: Date.now(),
   });
 
+  const jobs = new JobStore({ identity: opts.identity, engine });
   const app = new Hono();
 
   app.get("/", (c) => c.text("lobstah-worker\n"));
@@ -74,7 +78,13 @@ export const buildWorkerApp = (opts: BuildWorkerAppOptions): WorkerApp => {
 
   app.get("/capacity", async (c) => {
     const models = await engine.listModels();
-    return c.json({ pubkey: workerPubkey, models, queueDepth: 0 });
+    const counts = jobs.size();
+    return c.json({
+      pubkey: workerPubkey,
+      models,
+      queueDepth: counts.queued + counts.running,
+      jobCounts: counts,
+    });
   });
 
   app.get("/v1/models", async (c) => {
@@ -182,7 +192,32 @@ export const buildWorkerApp = (opts: BuildWorkerAppOptions): WorkerApp => {
     return c.json(result.payload);
   });
 
-  return { app, pubkey: workerPubkey, engine: engine.name };
+  // Async job API (cargo workloads): submit + poll instead of holding a stream.
+  app.post("/v1/jobs", async (c) => {
+    const requesterPubkey = c.req.header(REQUESTER_HEADER) ?? "anonymous";
+    const raw = await c.req.json();
+    const parsed = JobSubmitRequestSchema.safeParse(raw);
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.flatten() }, 400);
+    }
+    const job = jobs.submit(parsed.data, requesterPubkey);
+    return c.json(job, 202);
+  });
+
+  app.get("/v1/jobs/:id", (c) => {
+    const job = jobs.get(c.req.param("id"));
+    if (!job) return c.json({ error: { type: "not_found", message: "job not found" } }, 404);
+    return c.json(job);
+  });
+
+  app.delete("/v1/jobs/:id", (c) => {
+    const id = c.req.param("id");
+    const ok = jobs.cancel(id);
+    if (!ok) return c.json({ error: { type: "not_cancellable" } }, 409);
+    return c.json({ jobId: id, status: "error", error: { type: "cancelled" } });
+  });
+
+  return { app, pubkey: workerPubkey, engine: engine.name, jobs };
 };
 
 export const startWorker = async (opts: WorkerOptions): Promise<RunningWorker> => {
@@ -200,7 +235,9 @@ export const startWorker = async (opts: WorkerOptions): Promise<RunningWorker> =
     engine: built.engine,
     stop: () =>
       new Promise<void>((resolve, reject) => {
+        built.jobs.shutdown();
         server.close((err) => (err ? reject(err) : resolve()));
       }),
   };
 };
+

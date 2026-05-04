@@ -164,7 +164,8 @@ lobstah worker start \
 - [x] openclaw plugin wrapper (custom auth + onboarding wizard prompts)
 - [x] npm publish under `@lobstah/*` ([@lobstah/cli](https://www.npmjs.com/package/@lobstah/cli) + 7 sibling packages)
 - [ ] ClawHub listing
-- [ ] **Async job API** (`POST /v1/jobs` + status polling + OpenAI Batch-compatible endpoint) — the natural fit for cargo workloads
+- [x] **Async job API** (`POST /v1/jobs` + `GET /v1/jobs/:id` + `DELETE /v1/jobs/:id`) — submit-and-poll for cargo workloads. Worker maintains an in-memory FIFO queue with TTL eviction; router maps client-facing job ids to peer + worker-job-id; signed receipts ledgered on first `done` poll (nonce dedupe protects repeats)
+- [ ] OpenAI Batch-API compatibility (alias `/v1/batches` mapping to a list of `/v1/jobs`)
 - [ ] Latency-tier announcements (workers advertise expected p50 first-token latency: `interactive` / `batch` / `best-effort`)
 - [ ] Nostr-result-delivery for fully async jobs (worker DMs result back via Nostr; consumer doesn't need to be online when worker delivers)
 - [ ] Model-weighted credit pricing (replace today's flat 1-token=1-credit)
