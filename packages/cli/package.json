@@ -16,6 +16,7 @@
     "@lobstah/protocol": "workspace:*",
     "@lobstah/router": "workspace:*",
     "@lobstah/tracker": "workspace:*",
+    "@lobstah/transport-nostr": "workspace:*",
     "@lobstah/worker": "workspace:*"
   }
 }

@@ -9,11 +9,28 @@ import {
   sign,
   toHex,
 } from "@lobstah/protocol";
+import {
+  DEFAULT_RELAYS,
+  formatNostrNpub,
+  publishAnnouncement,
+  unpublishAnnouncement,
+} from "@lobstah/transport-nostr";
 import { startWorker } from "@lobstah/worker";
 
 const flag = (args: string[], name: string): string | undefined => {
   const i = args.indexOf(name);
   return i >= 0 ? args[i + 1] : undefined;
+};
+
+const flagAll = (args: string[], name: string): string[] => {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === name) {
+      const v = args[i + 1];
+      if (v) out.push(v);
+    }
+  }
+  return out;
 };
 
 const enc = new TextEncoder();
@@ -72,6 +89,38 @@ const unannounce = async (
   }
 };
 
+const announceViaNostr = async (
+  identity: Identity,
+  announceUrl: string,
+  label: string,
+  ttlSeconds: number,
+  models: string[],
+  relays: ReadonlyArray<string>,
+): Promise<{ ok: boolean; eventId?: string; accepted?: string[]; error?: string }> => {
+  const announcement: Announcement = {
+    version: 1,
+    pubkey: formatPubkey(identity.publicKey),
+    url: announceUrl,
+    label,
+    models,
+    ttlSeconds,
+    announcedAt: Date.now(),
+  };
+  const signed = signAnnouncement(announcement, identity.secretKey);
+  try {
+    const result = await publishAnnouncement(signed, identity.nostrSecretKey, { relays });
+    if (result.acceptedBy.length === 0) {
+      return {
+        ok: false,
+        error: `no relays accepted (rejected by ${result.rejectedBy.length})`,
+      };
+    }
+    return { ok: true, eventId: result.eventId, accepted: result.acceptedBy };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+};
+
 const fetchLocalModels = async (port: number): Promise<string[]> => {
   try {
     const r = await fetch(`http://127.0.0.1:${port}/capacity`);
@@ -90,6 +139,8 @@ export const worker = async (args: string[]): Promise<void> => {
   const announceUrl = flag(args, "--announce-url");
   const announceLabel = flag(args, "--announce-label") ?? "lobstah-worker";
   const announceTtl = Number(flag(args, "--announce-ttl") ?? "300");
+  const publishViaNostr = args.includes("--publish-via-nostr");
+  const nostrRelays = flagAll(args, "--nostr-relay");
   const port = portArg ? Number(portArg) : undefined;
 
   if (announceTo && !announceUrl) {
@@ -98,9 +149,16 @@ export const worker = async (args: string[]): Promise<void> => {
     );
     process.exit(2);
   }
+  if (publishViaNostr && !announceUrl) {
+    process.stderr.write(
+      "--publish-via-nostr requires --announce-url <reachable-url-of-this-worker>\n",
+    );
+    process.exit(2);
+  }
 
   const { identity } = await loadOrCreateIdentity();
   const pk = formatPubkey(identity.publicKey);
+  const npub = formatNostrNpub(identity.nostrPublicKey);
 
   const w = await startWorker({ identity, port, host: hostArg });
 
@@ -116,19 +174,19 @@ export const worker = async (args: string[]): Promise<void> => {
     );
   }
   process.stdout.write(`  identity: ${defaultIdentityPath()}\n`);
-  process.stdout.write(`  pubkey:   ${pk}\n`);
+  process.stdout.write(`  lobstah:  ${pk}\n`);
+  process.stdout.write(`  nostr:    ${npub}\n`);
   process.stdout.write(`  engine:   ${w.engine}\n`);
   process.stdout.write(`  ollama:   ${process.env.OLLAMA_HOST ?? "http://127.0.0.1:11434"}\n`);
 
-  if (announceTo && !isPublicHost) {
+  if ((announceTo || publishViaNostr) && !isPublicHost) {
     process.stdout.write(
-      "  NOTE: --announce-to is set but the worker is bound to a loopback host.\n" +
-        "        Peers won't be able to reach it. Pass --host 0.0.0.0 (or a\n" +
-        "        specific interface IP) to actually serve incoming requests.\n",
+      "  NOTE: announcing while bound to a loopback host — peers won't be able\n" +
+        "        to reach this worker. Pass --host 0.0.0.0 (or a specific interface IP).\n",
     );
   }
 
-  let heartbeatTimer: NodeJS.Timeout | undefined;
+  let trackerHeartbeat: NodeJS.Timeout | undefined;
   if (announceTo && announceUrl) {
     const models = await fetchLocalModels(w.port);
     const first = await announceOnce(
@@ -143,7 +201,7 @@ export const worker = async (args: string[]): Promise<void> => {
       `  tracker:  ${announceTo}  ${first.ok ? `(announced as ${announceUrl})` : `(FAILED: ${first.error})`}\n`,
     );
     const heartbeatMs = Math.max(Math.floor((announceTtl * 1000) / 2), 30_000);
-    heartbeatTimer = setInterval(() => {
+    trackerHeartbeat = setInterval(() => {
       void (async () => {
         const m = await fetchLocalModels(w.port);
         const r = await announceOnce(
@@ -154,21 +212,74 @@ export const worker = async (args: string[]): Promise<void> => {
           announceTtl,
           m,
         );
-        if (!r.ok) {
-          process.stderr.write(`heartbeat announce FAILED: ${r.error}\n`);
+        if (!r.ok) process.stderr.write(`tracker heartbeat FAILED: ${r.error}\n`);
+      })();
+    }, heartbeatMs);
+    trackerHeartbeat?.unref();
+  }
+
+  let nostrHeartbeat: NodeJS.Timeout | undefined;
+  let lastNostrEventId: string | undefined;
+  const activeNostrRelays: ReadonlyArray<string> =
+    nostrRelays.length > 0 ? nostrRelays : DEFAULT_RELAYS;
+  if (publishViaNostr && announceUrl) {
+    const models = await fetchLocalModels(w.port);
+    const first = await announceViaNostr(
+      identity,
+      announceUrl,
+      announceLabel,
+      announceTtl,
+      models,
+      activeNostrRelays,
+    );
+    if (first.ok && first.eventId) {
+      lastNostrEventId = first.eventId;
+      process.stdout.write(
+        `  nostr:    published to ${first.accepted?.length ?? 0}/${activeNostrRelays.length} relays (event ${first.eventId.slice(0, 12)}...)\n`,
+      );
+    } else {
+      process.stdout.write(`  nostr:    initial publish FAILED: ${first.error}\n`);
+    }
+    process.stdout.write(`            relays: ${activeNostrRelays.join(", ")}\n`);
+    const heartbeatMs = Math.max(Math.floor((announceTtl * 1000) / 2), 30_000);
+    nostrHeartbeat = setInterval(() => {
+      void (async () => {
+        const m = await fetchLocalModels(w.port);
+        const r = await announceViaNostr(
+          identity,
+          announceUrl,
+          announceLabel,
+          announceTtl,
+          m,
+          activeNostrRelays,
+        );
+        if (r.ok && r.eventId) {
+          lastNostrEventId = r.eventId;
+        } else {
+          process.stderr.write(`nostr heartbeat FAILED: ${r.error}\n`);
         }
       })();
     }, heartbeatMs);
+    nostrHeartbeat?.unref();
   }
-  // Use unref so the heartbeat doesn't keep the process alive past server shutdown.
-  heartbeatTimer?.unref();
 
   const shutdown = async (sig: string): Promise<void> => {
     process.stdout.write(`\nreceived ${sig}, shutting down...\n`);
-    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    if (trackerHeartbeat) clearInterval(trackerHeartbeat);
+    if (nostrHeartbeat) clearInterval(nostrHeartbeat);
     if (announceTo) {
       process.stdout.write(`  unannouncing from ${announceTo}...\n`);
       await unannounce(identity, announceTo);
+    }
+    if (publishViaNostr && lastNostrEventId) {
+      process.stdout.write("  publishing nostr deletion event (NIP-09)...\n");
+      try {
+        await unpublishAnnouncement(lastNostrEventId, identity.nostrSecretKey, {
+          relays: activeNostrRelays,
+        });
+      } catch {
+        // best effort
+      }
     }
     await w.stop();
     process.exit(0);

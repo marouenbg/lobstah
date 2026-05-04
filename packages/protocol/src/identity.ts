@@ -1,12 +1,26 @@
 import { ed25519 } from "@noble/curves/ed25519";
+import { schnorr } from "@noble/curves/secp256k1";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
+// Lobstah peers carry two keypairs.
+//
+// 1. Lobstah identity (Ed25519): signs receipts and announcements. This is
+//    the "trust" key; receipts attribute compute earned/spent to its pubkey.
+// 2. Nostr identity (secp256k1 / BIP340 Schnorr, x-only pubkey): signs the
+//    outer envelope when announcements are published over Nostr relays.
+//    Required by the Nostr protocol; lives entirely at the transport layer.
+//
+// Files saved as version 1 (lobstah-only) are auto-migrated to version 2 on
+// next load; we generate a Nostr key and re-save the file in place.
+
 export type Identity = {
   publicKey: Uint8Array;
   secretKey: Uint8Array;
+  nostrPublicKey: Uint8Array;
+  nostrSecretKey: Uint8Array;
 };
 
 export const defaultIdentityPath = (): string =>
@@ -15,7 +29,9 @@ export const defaultIdentityPath = (): string =>
 export const generateIdentity = (): Identity => {
   const secretKey = ed25519.utils.randomPrivateKey();
   const publicKey = ed25519.getPublicKey(secretKey);
-  return { publicKey, secretKey };
+  const nostrSecretKey = schnorr.utils.randomPrivateKey();
+  const nostrPublicKey = schnorr.getPublicKey(nostrSecretKey);
+  return { publicKey, secretKey, nostrPublicKey, nostrSecretKey };
 };
 
 export const sign = (message: Uint8Array, secretKey: Uint8Array): Uint8Array =>
@@ -49,24 +65,63 @@ export const parsePubkey = (s: string): Uint8Array => {
   return fromHex(hex);
 };
 
-type SerializedIdentity = {
+// Nostr keys are typically formatted as 64-char hex (BIP340 x-only pubkey or
+// 32-byte secret). Bech32 encoding (npub1.../nsec1...) lives in
+// @lobstah/transport-nostr to keep this package free of bech32 deps.
+export const formatNostrPubkeyHex = (pk: Uint8Array): string => toHex(pk);
+export const formatNostrSecretHex = (sk: Uint8Array): string => toHex(sk);
+
+type SerializedIdentityV1 = {
   version: 1;
   publicKey: string;
   secretKey: string;
 };
 
-const serialize = (id: Identity): SerializedIdentity => ({
-  version: 1,
+type SerializedIdentityV2 = {
+  version: 2;
+  publicKey: string;
+  secretKey: string;
+  nostrPublicKey: string;
+  nostrSecretKey: string;
+};
+
+type SerializedIdentity = SerializedIdentityV1 | SerializedIdentityV2;
+
+const serialize = (id: Identity): SerializedIdentityV2 => ({
+  version: 2,
   publicKey: formatPubkey(id.publicKey),
   secretKey: toHex(id.secretKey),
+  nostrPublicKey: toHex(id.nostrPublicKey),
+  nostrSecretKey: toHex(id.nostrSecretKey),
 });
 
-const deserialize = (s: SerializedIdentity): Identity => {
-  if (s.version !== 1) throw new Error(`unsupported identity version: ${s.version}`);
-  return {
-    publicKey: parsePubkey(s.publicKey),
-    secretKey: fromHex(s.secretKey),
-  };
+const deserialize = (s: SerializedIdentity): { identity: Identity; migrated: boolean } => {
+  if (s.version === 1) {
+    // Migrate: keep lobstah keys, generate fresh Nostr keys.
+    const nostrSecretKey = schnorr.utils.randomPrivateKey();
+    const nostrPublicKey = schnorr.getPublicKey(nostrSecretKey);
+    return {
+      identity: {
+        publicKey: parsePubkey(s.publicKey),
+        secretKey: fromHex(s.secretKey),
+        nostrPublicKey,
+        nostrSecretKey,
+      },
+      migrated: true,
+    };
+  }
+  if (s.version === 2) {
+    return {
+      identity: {
+        publicKey: parsePubkey(s.publicKey),
+        secretKey: fromHex(s.secretKey),
+        nostrPublicKey: fromHex(s.nostrPublicKey),
+        nostrSecretKey: fromHex(s.nostrSecretKey),
+      },
+      migrated: false,
+    };
+  }
+  throw new Error(`unsupported identity version: ${(s as { version: number }).version}`);
 };
 
 export const saveIdentity = async (
@@ -82,7 +137,12 @@ export const loadIdentity = async (
   path: string = defaultIdentityPath(),
 ): Promise<Identity> => {
   const raw = await readFile(path, "utf8");
-  return deserialize(JSON.parse(raw) as SerializedIdentity);
+  const { identity, migrated } = deserialize(JSON.parse(raw) as SerializedIdentity);
+  if (migrated) {
+    // Persist the v2-upgraded form so we don't migrate again on the next load.
+    await saveIdentity(identity, path);
+  }
+  return identity;
 };
 
 export const loadOrCreateIdentity = async (

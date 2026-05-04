@@ -4,9 +4,21 @@ import {
   verifyAnnouncement,
 } from "@lobstah/protocol";
 import { addPeer, loadPeers, removePeer } from "@lobstah/router";
+import { collectAnnouncements, DEFAULT_RELAYS } from "@lobstah/transport-nostr";
 
 const blockPrivateNetwork = (): boolean =>
   process.env.LOBSTAH_BLOCK_PRIVATE_ADDRS === "1";
+
+const flagAll = (args: string[], name: string): string[] => {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === name) {
+      const v = args[i + 1];
+      if (v) out.push(v);
+    }
+  }
+  return out;
+};
 
 export const peers = async (args: string[]): Promise<void> => {
   const sub = args[0];
@@ -87,6 +99,43 @@ export const peers = async (args: string[]): Promise<void> => {
       if (rejectedUrl) tail.push(`${rejectedUrl} unsafe-url`);
       process.stdout.write(
         `synced ${added} peer(s) from ${trackerUrl}` +
+          (tail.length ? ` (rejected ${tail.join(", ")})` : "") +
+          "\n",
+      );
+      return;
+    }
+    case "gossip-nostr": {
+      const customRelays = flagAll(args, "--nostr-relay");
+      const relays = customRelays.length > 0 ? customRelays : [...DEFAULT_RELAYS];
+      process.stdout.write(`subscribing to ${relays.length} relay(s):\n`);
+      for (const r of relays) process.stdout.write(`  ${r}\n`);
+      const start = Date.now();
+      const { accepted, rejected } = await collectAnnouncements({ relays });
+      const elapsed = Math.round((Date.now() - start) / 100) / 10;
+      process.stdout.write(
+        `received ${accepted.length} valid announcement(s) in ${elapsed}s ` +
+          `(${rejected.length} rejected)\n`,
+      );
+
+      let added = 0;
+      let rejectedUrl = 0;
+      const policy = { blockPrivateNetwork: blockPrivateNetwork() };
+      for (const ingested of accepted) {
+        const a = ingested.signed.announcement;
+        const safe = await assertSafeUrl(a.url, policy);
+        if (!safe.ok) {
+          rejectedUrl += 1;
+          process.stderr.write(`  skipping ${a.pubkey.slice(0, 16)}: ${safe.reason}\n`);
+          continue;
+        }
+        await addPeer({ pubkey: a.pubkey, url: a.url, label: a.label });
+        added += 1;
+      }
+      const tail: string[] = [];
+      if (rejected.length) tail.push(`${rejected.length} nostr-rejected`);
+      if (rejectedUrl) tail.push(`${rejectedUrl} unsafe-url`);
+      process.stdout.write(
+        `merged ${added} peer(s) into local peers.json` +
           (tail.length ? ` (rejected ${tail.join(", ")})` : "") +
           "\n",
       );
