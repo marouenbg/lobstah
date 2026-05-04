@@ -7,7 +7,7 @@ import {
   buildLobstahProvider,
   LOBSTAH_DEFAULT_API_KEY_ENV_VAR,
   LOBSTAH_DEFAULT_BASE_URL,
-  LOBSTAH_DEFAULT_TRACKER_URL,
+  LOBSTAH_DEFAULT_NOSTR_RELAYS,
   LOBSTAH_DEFAULT_WORKER_PORT,
   LOBSTAH_MODEL_PLACEHOLDER,
   LOBSTAH_PROVIDER_LABEL,
@@ -22,10 +22,11 @@ async function loadProviderSetup() {
 const INTRO_NOTE = [
   "Lobstah is a peer-to-peer compute grid.",
   "",
-  "By default your machine stays invisible — nothing is announced anywhere",
-  "and you don't pull any peers from the network. We'll first connect openclaw",
-  "to your local lobstah-router, then ask separately about (1) discovering",
-  "compute providers, and (2) advertising your machine. Both default to no.",
+  "By default your machine stays invisible — nothing is published to any",
+  "Nostr relay and you don't pull any peers from the network. We'll first",
+  "connect openclaw to your local lobstah-router, then ask separately about",
+  "(1) discovering compute providers via Nostr, and (2) advertising your",
+  "machine via Nostr. Both default to no.",
 ].join("\n");
 
 export default definePluginEntry({
