@@ -61,60 +61,65 @@ export default definePluginEntry({
               modelPlaceholder: LOBSTAH_MODEL_PLACEHOLDER,
             });
 
-            // Opt-in: discover compute providers from a public tracker.
+            // Opt-in: discover compute providers via Nostr.
             const wantsSync = await ctx.prompter.confirm({
-              message: "Discover compute providers from a public lobstah tracker?",
+              message: "Discover compute providers via the Nostr relay network?",
               initialValue: false,
             });
             if (wantsSync) {
-              const trackerUrl = await ctx.prompter.text({
-                message: "Tracker URL to sync from",
-                initialValue: LOBSTAH_DEFAULT_TRACKER_URL,
-                placeholder: LOBSTAH_DEFAULT_TRACKER_URL,
+              await ctx.prompter.confirm({
+                message: `Use the default relays (${LOBSTAH_DEFAULT_NOSTR_RELAYS.join(", ")})?`,
+                initialValue: true,
               });
               await ctx.prompter.note(
                 [
-                  "To pull the peer list now (and any time after), run:",
+                  "To pull the current peer list (and any time after), run:",
                   "",
-                  `  lobstah peers sync ${trackerUrl}`,
+                  "  lobstah peers gossip-nostr",
+                  "",
+                  "Add `--nostr-relay wss://your-preferred-relay` to use other relays.",
                   "",
                   "This is opt-in and revocable: peers expire from your local cache",
                   "when their TTL ends, and you can `lobstah peers remove <pubkey>`",
-                  "any time.",
+                  "any time. Subscribing reveals nothing about your identity to relays.",
                 ].join("\n"),
-                "Sync peers",
+                "Discover via Nostr",
               );
             }
 
-            // Opt-in: advertise this machine on a public tracker.
+            // Opt-in: advertise this machine via Nostr.
             const wantsAdvertise = await ctx.prompter.confirm({
-              message: "Advertise this machine on a public tracker so others can use your compute?",
+              message: "Advertise this machine via Nostr so others can use your compute?",
               initialValue: false,
             });
             if (wantsAdvertise) {
-              const advertiseTracker = await ctx.prompter.text({
-                message: "Tracker URL to announce on",
-                initialValue: LOBSTAH_DEFAULT_TRACKER_URL,
-                placeholder: LOBSTAH_DEFAULT_TRACKER_URL,
-              });
               const advertiseUrl = await ctx.prompter.text({
                 message: "Reachable URL of your worker (peers will connect here)",
                 placeholder: `http://your-public-host:${LOBSTAH_DEFAULT_WORKER_PORT}`,
                 validate: (v) =>
                   v.trim().length === 0 ? "URL is required" : undefined,
               });
+              await ctx.prompter.confirm({
+                message: `Publish to the default relays (${LOBSTAH_DEFAULT_NOSTR_RELAYS.join(", ")})?`,
+                initialValue: true,
+              });
               await ctx.prompter.note(
                 [
                   "To start advertising, run:",
                   "",
-                  `  lobstah worker start --announce-to ${advertiseTracker} \\`,
+                  "  lobstah worker start \\",
+                  "      --host 0.0.0.0 \\",
+                  "      --publish-via-nostr \\",
                   `      --announce-url ${advertiseUrl}`,
                   "",
-                  "Stop the worker process to immediately unannounce. The tracker",
-                  "entry also expires automatically after 5 minutes if heartbeats",
-                  "stop. You can revoke at any time.",
+                  "Add `--nostr-relay wss://your-preferred-relay` (repeatable) to publish",
+                  "to additional or alternative relays.",
+                  "",
+                  "Stop the worker process to immediately unannounce (NIP-09 deletion).",
+                  "The Nostr event also expires automatically after 5 minutes if",
+                  "heartbeats stop. You can revoke at any time.",
                 ].join("\n"),
-                "Advertise compute",
+                "Advertise via Nostr",
               );
             }
 
