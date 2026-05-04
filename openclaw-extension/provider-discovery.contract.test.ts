@@ -1,5 +1,16 @@
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// `openclaw/plugin-sdk/plugin-entry` is a virtual module resolved by the
+// openclaw runtime at plugin install time — it doesn't exist on disk
+// for vitest to load. We stub its surface so `import("./index.js")`
+// works in this contract test.
+vi.mock("openclaw/plugin-sdk/plugin-entry", () => ({
+  definePluginEntry: <T,>(entry: T): T => entry,
+}));
+
+type OpenClawPluginApi = {
+  registerProvider: (provider: unknown) => void;
+};
 
 const buildLobstahProviderMock = vi.hoisted(() => vi.fn());
 type DiscoverOpenAICompatibleSelfHostedProviderParams = {
@@ -28,9 +39,27 @@ const discoverOpenAICompatibleSelfHostedProviderMock = vi.hoisted(() =>
 vi.mock("./api.js", () => ({
   LOBSTAH_DEFAULT_API_KEY_ENV_VAR: "LOBSTAH_ROUTER_URL",
   LOBSTAH_DEFAULT_BASE_URL: "http://127.0.0.1:17475/v1",
+  LOBSTAH_DEFAULT_NOSTR_RELAYS: ["wss://relay.test"],
+  LOBSTAH_DEFAULT_WORKER_PORT: 17474,
   LOBSTAH_MODEL_PLACEHOLDER: "llama3.1:8b",
   LOBSTAH_PROVIDER_LABEL: "Lobstah",
   buildLobstahProvider: (...args: unknown[]) => buildLobstahProviderMock(...args),
+}));
+
+// The embedded router (and its Nostr gossip) does real network/IO work.
+// Stubbing it here keeps this contract test focused on the plugin
+// surface — the embedded-router behavior is covered separately.
+vi.mock("./embedded-router.js", () => ({
+  ensureEmbeddedRouter: vi.fn(async () => ({
+    url: "http://127.0.0.1:17475",
+    source: "embedded" as const,
+  })),
+  gossipFromNostrInBackground: vi.fn(async () => ({
+    acceptedCount: 0,
+    addedCount: 0,
+    errored: false,
+    skipped: true,
+  })),
 }));
 
 vi.mock("openclaw/plugin-sdk/provider-setup", () => ({

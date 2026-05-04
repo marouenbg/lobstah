@@ -21,6 +21,18 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@22.19.17)
 
+  openclaw-extension:
+    dependencies:
+      '@lobstah/protocol':
+        specifier: workspace:*
+        version: link:../packages/protocol
+      '@lobstah/router':
+        specifier: workspace:*
+        version: link:../packages/router
+      '@lobstah/transport-nostr':
+        specifier: workspace:*
+        version: link:../packages/transport-nostr
+
   packages/cli:
     dependencies:
       '@lobstah/engine-ollama':

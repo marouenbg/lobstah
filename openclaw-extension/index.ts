@@ -12,8 +12,41 @@ import {
   LOBSTAH_MODEL_PLACEHOLDER,
   LOBSTAH_PROVIDER_LABEL,
 } from "./api.js";
+import {
+  ensureEmbeddedRouter,
+  gossipFromNostrInBackground,
+} from "./embedded-router.js";
 
 const PROVIDER_ID = "lobstah";
+
+// Resolved by the embedded router on plugin activation. Falls back to
+// the static default if the router hasn't reported in yet (which only
+// happens during a small startup window).
+let resolvedRouterBaseUrl = LOBSTAH_DEFAULT_BASE_URL;
+
+const getRouterBaseUrl = (): string => resolvedRouterBaseUrl;
+
+// Boot the router (and kick off Nostr gossip) once per process. We
+// don't block plugin registration on either; the openclaw runtime can
+// pick up the resolved URL by the time a request fires, and worst case
+// the static default is correct because the router landed on 17475.
+const bootSideEffects = (): void => {
+  void (async () => {
+    try {
+      const r = await ensureEmbeddedRouter();
+      resolvedRouterBaseUrl = `${r.url}/v1`;
+    } catch (e) {
+      // Plugin still works if the router fails to start — openclaw
+      // will surface a "no_capable_peer" or connect-refused later
+      // and we keep the default URL so error messages stay sane.
+      const msg = e instanceof Error ? e.message : String(e);
+      process.stderr.write(`@lobstah/openclaw-provider: router boot failed: ${msg}\n`);
+    }
+  })();
+  // Background gossip — fire-and-forget. Doesn't matter if it
+  // succeeds; the user can still use any peers already in peers.json.
+  void gossipFromNostrInBackground();
+};
 
 // The plugin-sdk surface is intentionally typed wide — the real bindings
 // are wired up by the openclaw runtime at install time, not at compile
@@ -30,11 +63,11 @@ async function loadProviderSetup(): Promise<Record<string, unknown> & {
 const INTRO_NOTE = [
   "Lobstah is a peer-to-peer compute grid.",
   "",
-  "By default your machine stays invisible — nothing is published to any",
-  "Nostr relay and you don't pull any peers from the network. We'll first",
-  "connect openclaw to your local lobstah-router, then ask separately about",
-  "(1) discovering compute providers via Nostr, and (2) advertising your",
-  "machine via Nostr. Both default to no.",
+  "We just started a local lobstah-router in this openclaw process —",
+  "no separate `lobstah router start` needed. Your machine stays",
+  "invisible by default; nothing is published to any Nostr relay and",
+  "you can opt into discovery + advertising in the next two prompts.",
+  "Both default to no.",
 ].join("\n");
 
 export default definePluginEntry({
@@ -43,6 +76,11 @@ export default definePluginEntry({
   description:
     "Distributed P2P LLM inference grid for Apple Mac mini. Routes requests to peer workers via signed-receipt federated ledger.",
   register(api: OpenClawPluginApi) {
+    // Kick off router boot + background Nostr gossip. Fire-and-forget;
+    // `register` is allowed to return synchronously while the side
+    // effects run in the background.
+    bootSideEffects();
+
     api.registerProvider({
       id: PROVIDER_ID,
       label: LOBSTAH_PROVIDER_LABEL,
@@ -64,36 +102,29 @@ export default definePluginEntry({
               prompter: ctx.prompter,
               providerId: PROVIDER_ID,
               providerLabel: LOBSTAH_PROVIDER_LABEL,
-              defaultBaseUrl: LOBSTAH_DEFAULT_BASE_URL,
+              defaultBaseUrl: getRouterBaseUrl(),
               defaultApiKeyEnvVar: LOBSTAH_DEFAULT_API_KEY_ENV_VAR,
               modelPlaceholder: LOBSTAH_MODEL_PLACEHOLDER,
             });
 
-            // Opt-in: discover compute providers via Nostr.
-            const wantsSync = await ctx.prompter.confirm({
-              message: "Discover compute providers via the Nostr relay network?",
-              initialValue: false,
-            });
-            if (wantsSync) {
-              await ctx.prompter.confirm({
-                message: `Use the default relays (${LOBSTAH_DEFAULT_NOSTR_RELAYS.join(", ")})?`,
-                initialValue: true,
-              });
-              await ctx.prompter.note(
-                [
-                  "To pull the current peer list (and any time after), run:",
-                  "",
-                  "  lobstah peers gossip-nostr",
-                  "",
-                  "Add `--nostr-relay wss://your-preferred-relay` to use other relays.",
-                  "",
-                  "This is opt-in and revocable: peers expire from your local cache",
-                  "when their TTL ends, and you can `lobstah peers remove <pubkey>`",
-                  "any time. Subscribing reveals nothing about your identity to relays.",
-                ].join("\n"),
-                "Discover via Nostr",
-              );
-            }
+            // Discovery via Nostr now happens automatically in the
+            // background when the plugin loads (see bootSideEffects).
+            // We surface that as a one-line FYI rather than a confirm
+            // prompt so the auth flow stays short. Users who want to
+            // disable it set LOBSTAH_OPENCLAW_NO_NOSTR=1 (read inside
+            // gossipFromNostrInBackground via env), or `lobstah peers
+            // remove <pubkey>` afterward.
+            await ctx.prompter.note(
+              [
+                `Discovery: pulling peer announcements from ${LOBSTAH_DEFAULT_NOSTR_RELAYS.length} default Nostr relays`,
+                `(${LOBSTAH_DEFAULT_NOSTR_RELAYS.join(", ")}).`,
+                "",
+                "This is opt-out: peers expire from your local cache when their",
+                "TTL ends, and you can `lobstah peers remove <pubkey>` at any",
+                "time. Subscribing reveals nothing about your identity to relays.",
+              ].join("\n"),
+              "Discover via Nostr (auto)",
+            );
 
             // Opt-in: advertise this machine via Nostr.
             const wantsAdvertise = await ctx.prompter.confirm({
@@ -113,18 +144,18 @@ export default definePluginEntry({
               });
               await ctx.prompter.note(
                 [
-                  "To start advertising, run:",
+                  "Advertising requires running a worker process — the consumer",
+                  "side (this plugin) is already in-process, but the worker is",
+                  "a separate long-running daemon that lives outside openclaw.",
                   "",
+                  "  npm install -g @lobstah/cli   # one-time",
                   "  lobstah worker start \\",
                   "      --host 0.0.0.0 \\",
                   "      --publish-via-nostr \\",
                   `      --announce-url ${advertiseUrl}`,
                   "",
-                  "Add `--nostr-relay wss://your-preferred-relay` (repeatable) to publish",
-                  "to additional or alternative relays.",
-                  "",
-                  "Stop the worker process to immediately unannounce (NIP-09 deletion).",
-                  "The Nostr event also expires automatically after 5 minutes if",
+                  "Stop the worker process to immediately unannounce (NIP-09",
+                  "deletion). The Nostr event also expires after 5 minutes if",
                   "heartbeats stop. You can revoke at any time.",
                 ].join("\n"),
                 "Advertise via Nostr",
@@ -169,13 +200,14 @@ export default definePluginEntry({
         },
         modelPicker: {
           label: "Lobstah grid",
-          hint: "Point at a running lobstah-router (default http://127.0.0.1:17475/v1)",
+          hint: "Auto-routed via the embedded lobstah-router (defaults to 127.0.0.1:17475)",
           methodId: "custom",
         },
       },
       buildUnknownModelHint: () =>
-        "Lobstah requires a running lobstah-router. " +
-        "Start one with `lobstah router start` and run `openclaw configure`. " +
+        "Lobstah needs at least one peer worker advertising this model. " +
+        "Try `lobstah peers gossip-nostr` to refresh the peer list, or " +
+        "`lobstah peers add <pubkey> <url>` to add a known worker manually. " +
         "See: https://docs.openclaw.ai/providers/lobstah",
     });
   },
