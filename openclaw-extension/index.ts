@@ -12,6 +12,7 @@ import {
   LOBSTAH_MODEL_PLACEHOLDER,
   LOBSTAH_PROVIDER_LABEL,
 } from "./api.js";
+import { buildLobstahStaticProvider } from "./models.js";
 import {
   ensureEmbeddedRouter,
   gossipFromNostrInBackground,
@@ -187,6 +188,15 @@ export default definePluginEntry({
             buildProvider: buildLobstahProvider,
           });
         },
+      },
+      // Pre-configuration catalog. Surfaces lobstah in
+      // `openclaw infer model providers` and the model picker even
+      // before the user has the embedded router warm or the
+      // LOBSTAH_ROUTER_URL env var set. Mirrors the openclaw.plugin.json
+      // modelCatalog block; see buildLobstahStaticProvider in models.ts.
+      staticCatalog: {
+        order: "simple",
+        run: async () => ({ provider: buildLobstahStaticProvider() }),
       },
       wizard: {
         setup: {
