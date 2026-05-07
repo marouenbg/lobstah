@@ -17,6 +17,7 @@ import {
   ensureEmbeddedRouter,
   gossipFromNostrInBackground,
 } from "./embedded-router.js";
+import { renderDashboard } from "./dashboard.js";
 
 const PROVIDER_ID = "lobstah";
 
@@ -81,6 +82,45 @@ export default definePluginEntry({
     // `register` is allowed to return synchronously while the side
     // effects run in the background.
     bootSideEffects();
+
+    // Slash command: `/lobstah` prints a live dashboard inline in
+    // the openclaw chat. Drops in a markdown summary of peers,
+    // your credit balance, and recent receipts. No-args today;
+    // future versions can route subcommands (e.g. /lobstah share,
+    // /lobstah workers) but for now the whole picture in one view.
+    api.registerCommand({
+      name: "lobstah",
+      description: "Show the lobstah grid status: peers, balance, recent receipts",
+      acceptsArgs: false,
+      requireAuth: true,
+      handler: async () => {
+        try {
+          const text = await renderDashboard();
+          return { text, continueAgent: false };
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          return {
+            text: `🦞 _Lobstah dashboard failed:_ ${msg}`,
+            continueAgent: false,
+          };
+        }
+      },
+    });
+
+    // Sidebar control UI surface — declares the panel to openclaw's
+    // session UI so the host can render it. Schema is intentionally
+    // empty for now: the live data comes from the embedded router's
+    // HTTP surface, not from this descriptor. Treat this as the
+    // "tell openclaw we have a UI worth showing" hook; the actual
+    // rendering shape will firm up in a follow-up release.
+    api.registerControlUiDescriptor({
+      id: "lobstah-grid-status",
+      surface: "session",
+      placement: "session-sidebar",
+      label: "Lobstah grid",
+      description:
+        "Live peer roster, credit balance, recent receipts. Updates each time the panel opens.",
+    });
 
     api.registerProvider({
       id: PROVIDER_ID,
