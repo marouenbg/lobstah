@@ -22,6 +22,30 @@
       }
     }
   },
+  "modelCatalog": {
+    "providers": {
+      "lobstah": {
+        "baseUrl": "http://127.0.0.1:17475/v1",
+        "api": "openai-completions",
+        "models": [
+          {
+            "id": "llama3.1:8b",
+            "name": "Llama 3.1 8B (via lobstah grid)",
+            "input": ["text"],
+            "contextWindow": 131072,
+            "maxTokens": 4096
+          },
+          {
+            "id": "qwen2.5:7b",
+            "name": "Qwen 2.5 7B (via lobstah grid)",
+            "input": ["text"],
+            "contextWindow": 131072,
+            "maxTokens": 4096
+          }
+        ]
+      }
+    }
+  },
   "setup": {
     "providers": [
       {
