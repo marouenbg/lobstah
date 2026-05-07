@@ -22,8 +22,14 @@
       }
     }
   },
-  "providerAuthEnvVars": {
-    "lobstah": ["LOBSTAH_ROUTER_URL"]
+  "setup": {
+    "providers": [
+      {
+        "id": "lobstah",
+        "authMethods": ["custom"],
+        "envVars": ["LOBSTAH_ROUTER_URL"]
+      }
+    ]
   },
   "providerAuthChoices": [
     {
