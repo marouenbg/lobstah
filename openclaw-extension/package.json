@@ -1,6 +1,6 @@
 {
   "name": "@lobstah/openclaw-provider",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "OpenClaw model-provider plugin for the Lobstah distributed-inference grid. Adds 'Lobstah grid' as an OpenAI-compatible provider with opt-in Nostr discovery + opt-in advertising in the openclaw onboarding wizard.",
   "type": "module",
   "license": "MIT",
@@ -43,6 +43,7 @@
     "api.ts",
     "defaults.ts",
     "embedded-router.ts",
+    "env-config.ts",
     "models.ts",
     "dist",
     "openclaw.plugin.json",

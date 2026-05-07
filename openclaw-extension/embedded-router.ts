@@ -5,6 +5,7 @@ import {
 } from "@lobstah/protocol";
 import { addPeer, type RunningRouter, startRouter } from "@lobstah/router";
 import { collectAnnouncements, DEFAULT_RELAYS } from "@lobstah/transport-nostr";
+import { BLOCK_PRIVATE_NETWORK, SKIP_NOSTR_AUTOGOSSIP } from "./env-config.js";
 
 // In-process lobstah-router. Replaces the historic "you must run
 // `lobstah router start` separately" step — when the openclaw-provider
@@ -36,9 +37,6 @@ type Embedded = {
 };
 
 let activeRouter: Promise<Embedded> | undefined;
-
-const blockPrivateNetwork = (): boolean =>
-  process.env.LOBSTAH_BLOCK_PRIVATE_ADDRS === "1";
 
 // Probe a candidate URL: is something already serving the lobstah-router
 // surface here? We read /pubkey because it's the cheapest healthcheck the
@@ -122,12 +120,12 @@ export const gossipFromNostrInBackground = async (
   errored: boolean;
   skipped: boolean;
 }> => {
-  if (process.env.LOBSTAH_OPENCLAW_NO_NOSTR === "1") {
+  if (SKIP_NOSTR_AUTOGOSSIP) {
     return { acceptedCount: 0, addedCount: 0, errored: false, skipped: true };
   }
   try {
     const { accepted } = await collectAnnouncements({ relays });
-    const policy = { blockPrivateNetwork: blockPrivateNetwork() };
+    const policy = { blockPrivateNetwork: BLOCK_PRIVATE_NETWORK };
     let added = 0;
     for (const ingested of accepted) {
       const a = ingested.signed.announcement;
