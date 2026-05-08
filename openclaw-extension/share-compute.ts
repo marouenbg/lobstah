@@ -1,25 +1,42 @@
 // Two-way grid: in addition to consuming compute via the embedded
-// router, this module spins up an in-process WORKER plus a cloudflared
-// quick tunnel so the user's Mac advertises itself to the lobstah
-// network. Toggle on/off via the /lobstah slash command.
+// router, this module spins up an in-process WORKER and publishes a
+// signed Nostr announcement so peers can route inference jobs to the
+// user's Mac.
+//
+// User UX:
+//   /lobstah share on <public-url>   start sharing at the given URL
+//   /lobstah share off               NIP-09 delete + stop worker
+//
+// The plugin does NOT spawn cloudflared / ngrok / etc. — that's the
+// user's responsibility. They run a tunnel (or use Tailscale, port
+// forwarding, a static IP) and pass the resulting URL into the slash
+// command. Two reasons for this design:
+//
+// 1. The ClawHub plugin scanner blocks community plugins from using
+//    subprocess spawning — even our legitimate use to start a tunnel
+//    binary is indistinguishable from credential exfiltration to a
+//    static analyzer. Keeping the worker side subprocess-free
+//    unblocks publish.
+// 2. Users are likely to have *some* tunnel they already trust
+//    (Tailscale on a corporate laptop, port-forward at home,
+//    Cloudflare Named Tunnel for production). Forcing cloudflared
+//    quick tunnels would be the wrong default for many of them.
 //
 // Lifecycle:
-//   on:  spawn cloudflared, capture *.trycloudflare.com URL, start
-//        in-process worker on 127.0.0.1:17474, publish signed Nostr
-//        announcement, schedule heartbeat re-publish.
-//   off: NIP-09-delete the announcement, stop the worker, kill the
-//        cloudflared subprocess.
+//   on:  validate URL via @lobstah/protocol url-safety, load
+//        identity, start in-process worker on 127.0.0.1:17474,
+//        publish signed Nostr announcement, schedule heartbeat.
+//   off: NIP-09 deletion, stop worker.
 //
-// State is in-memory. If openclaw restarts while sharing is on, the
-// orphaned cloudflared process exits when the parent dies (we set
-// detached: false), the worker process dies with the host, and the
-// stale Nostr announcement expires on its own TTL (~5 min) — the user
-// has to /lobstah share on again to come back online. Persisting and
-// auto-resuming across restarts is a future polish item.
+// State is in-memory. If openclaw restarts while sharing, the worker
+// dies with the host and the stale Nostr announcement expires on its
+// own TTL (~5 min). User has to /lobstah share on again. Auto-resume
+// is roadmap.
 
 import { OllamaEngine } from "@lobstah/engine-ollama";
 import {
   type Announcement,
+  assertSafeUrl,
   formatPubkey,
   type Identity,
   loadOrCreateIdentity,
@@ -31,10 +48,6 @@ import {
   unpublishAnnouncement,
 } from "@lobstah/transport-nostr";
 import { type RunningWorker, startWorker } from "@lobstah/worker";
-import { spawn, type ChildProcess } from "node:child_process";
-import { mkdir } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
 
 const WORKER_PORT = 17474;
 const ANNOUNCE_LABEL = "openclaw-shared";
@@ -45,7 +58,6 @@ type ActiveShare = {
   startedAt: number;
   worker: RunningWorker;
   identity: Identity;
-  cloudflared: ChildProcess;
   tunnelUrl: string;
   announceLabel: string;
   heartbeat: NodeJS.Timeout;
@@ -75,21 +87,19 @@ export const getShareState = (): ShareState => {
   };
 };
 
-// Light prerequisites probe: Ollama running locally + at least one
-// model loaded + cloudflared on PATH. Returns missing prerequisites
-// rather than throwing so the caller can render a tidy message.
+// Probe Ollama via its HTTP API — no subprocess spawning. Returns
+// missing prerequisites rather than throwing so the caller renders a
+// tidy message.
 export const checkPrerequisites = async (): Promise<{
   ok: boolean;
   reasons: string[];
 }> => {
   const reasons: string[] = [];
-
-  // Ollama API check
   try {
     const r = await fetch("http://127.0.0.1:11434/api/tags", {
       signal: AbortSignal.timeout(2000),
     });
-    if (!r.ok) reasons.push("ollama responded with HTTP " + r.status);
+    if (!r.ok) reasons.push(`ollama responded with HTTP ${r.status}`);
     else {
       const body = (await r.json()) as { models?: { name: string }[] };
       if (!body.models || body.models.length === 0) {
@@ -99,92 +109,7 @@ export const checkPrerequisites = async (): Promise<{
   } catch {
     reasons.push("ollama is not running on 127.0.0.1:11434 (install: https://ollama.com)");
   }
-
-  // cloudflared on PATH
-  const which = await new Promise<string | null>((resolve) => {
-    const p = spawn("which", ["cloudflared"], { stdio: ["ignore", "pipe", "ignore"] });
-    let out = "";
-    p.stdout.on("data", (chunk) => {
-      out += String(chunk);
-    });
-    p.on("close", (code) => resolve(code === 0 ? out.trim() : null));
-    p.on("error", () => resolve(null));
-  });
-  if (!which) {
-    reasons.push("cloudflared is not on PATH (install: `brew install cloudflared`)");
-  }
-
   return { ok: reasons.length === 0, reasons };
-};
-
-// Spawn cloudflared, parse stdout for the trycloudflare URL. Resolves
-// once the URL is in hand; rejects on cloudflared exit-before-URL or
-// timeout.
-const spawnCloudflaredTunnel = async (
-  port: number,
-  logPath: string,
-): Promise<{ url: string; child: ChildProcess }> => {
-  const child = spawn(
-    "cloudflared",
-    ["tunnel", "--url", `http://127.0.0.1:${port}`, "--no-autoupdate"],
-    {
-      stdio: ["ignore", "pipe", "pipe"],
-      detached: false,
-    },
-  );
-
-  return new Promise<{ url: string; child: ChildProcess }>((resolve, reject) => {
-    const URL_RE = /https?:\/\/[a-z0-9.-]+\.trycloudflare\.com/i;
-    let buffer = "";
-    let timer: NodeJS.Timeout | undefined;
-    let resolved = false;
-
-    const onChunk = (chunk: Buffer) => {
-      const s = String(chunk);
-      buffer += s;
-      // Forward all output to a log file for diagnostics. Best effort
-      // — we don't await it.
-      void mkdir(logPath.replace(/\/[^/]+$/, ""), { recursive: true })
-        .catch(() => undefined)
-        .then(() =>
-          import("node:fs").then(({ appendFile }) => appendFile(logPath, s, () => undefined)),
-        );
-      const m = buffer.match(URL_RE);
-      if (m && !resolved) {
-        resolved = true;
-        if (timer) clearTimeout(timer);
-        resolve({ url: m[0], child });
-      }
-    };
-
-    child.stdout?.on("data", onChunk);
-    child.stderr?.on("data", onChunk); // cloudflared writes the URL to stderr in some versions
-    child.on("error", (e) => {
-      if (resolved) return;
-      resolved = true;
-      if (timer) clearTimeout(timer);
-      reject(new Error(`cloudflared spawn failed: ${e.message}`));
-    });
-    child.on("exit", (code) => {
-      if (resolved) return;
-      resolved = true;
-      if (timer) clearTimeout(timer);
-      reject(new Error(`cloudflared exited (code=${code}) before URL appeared`));
-    });
-
-    // Cloudflared takes ~3-6s to establish; cap at 30s to surface
-    // network/auth issues quickly.
-    timer = setTimeout(() => {
-      if (resolved) return;
-      resolved = true;
-      try {
-        child.kill();
-      } catch {
-        // best-effort
-      }
-      reject(new Error("timed out waiting for trycloudflare URL after 30s"));
-    }, 30_000);
-  });
 };
 
 const announceOnce = async (
@@ -222,9 +147,10 @@ export type EnableResult =
   | { ok: true; tunnelUrl: string; pubkey: string; eventId?: string }
   | { ok: false; reasons: string[] };
 
-export const enableShareCompute = async (
-  opts: { announceLabel?: string } = {},
-): Promise<EnableResult> => {
+export const enableShareCompute = async (opts: {
+  tunnelUrl: string;
+  announceLabel?: string;
+}): Promise<EnableResult> => {
   if (active) {
     return {
       ok: true,
@@ -234,26 +160,29 @@ export const enableShareCompute = async (
     };
   }
 
+  const tunnelUrl = opts.tunnelUrl.trim();
+  if (tunnelUrl.length === 0) {
+    return { ok: false, reasons: ["public URL is required"] };
+  }
+
+  // Validate the URL the user passed: must parse, must have an http/
+  // https scheme, must resolve to something other than loopback /
+  // link-local / unspecified. Reuses the same SSRF-safety helper the
+  // router uses on outbound peer connections so the trust model is
+  // symmetric: we don't advertise an unsafe URL even if the user
+  // typed one.
+  const safe = await assertSafeUrl(tunnelUrl, {
+    blockPrivateNetwork: false,
+  });
+  if ("reason" in safe) {
+    return { ok: false, reasons: [`invalid announce URL: ${safe.reason}`] };
+  }
+
   const pre = await checkPrerequisites();
   if (!pre.ok) return { ok: false, reasons: pre.reasons };
 
   const { identity } = await loadOrCreateIdentity();
-  const logPath = join(homedir(), ".lobstah", "logs", "openclaw-share-cloudflared.log");
 
-  // 1) Get the public URL first — without it we have nothing to
-  //    announce on Nostr, and a worker reachable only at 127.0.0.1
-  //    is useless to peers.
-  let tunnel: { url: string; child: ChildProcess };
-  try {
-    tunnel = await spawnCloudflaredTunnel(WORKER_PORT, logPath);
-  } catch (e) {
-    const reason = e instanceof Error ? e.message : String(e);
-    return { ok: false, reasons: [reason] };
-  }
-
-  // 2) Start the worker. The cloudflared tunnel forwards public
-  //    traffic to 127.0.0.1, so binding the worker to loopback is
-  //    fine and avoids exposing 17474 on every interface.
   let worker: RunningWorker;
   try {
     worker = await startWorker({
@@ -264,27 +193,15 @@ export const enableShareCompute = async (
       tier: "batch",
     });
   } catch (e) {
-    try {
-      tunnel.child.kill();
-    } catch {
-      // best-effort
-    }
     const reason = e instanceof Error ? e.message : String(e);
     return { ok: false, reasons: [`worker start failed: ${reason}`] };
   }
 
-  // 3) Publish the signed announcement.
   const announceLabel = opts.announceLabel ?? ANNOUNCE_LABEL;
   const cap = await fetchLocalModels(worker.port);
-  const first = await announceOnce(identity, tunnel.url, announceLabel, cap);
+  const first = await announceOnce(identity, tunnelUrl, announceLabel, cap);
   if ("reason" in first) {
-    // Tear down before reporting; we don't want a half-up state.
     await worker.stop().catch(() => undefined);
-    try {
-      tunnel.child.kill();
-    } catch {
-      // best-effort
-    }
     return {
       ok: false,
       reasons: [`Nostr publish failed: ${first.reason}`],
@@ -297,7 +214,7 @@ export const enableShareCompute = async (
       if (!active) return;
       const m = await fetchLocalModels(active.worker.port);
       const r = await announceOnce(active.identity, active.tunnelUrl, announceLabel, m);
-      if (r.ok) active.lastEventId = r.eventId;
+      if ("eventId" in r) active.lastEventId = r.eventId;
     })();
   }, HEARTBEAT_MS);
   heartbeat.unref();
@@ -306,8 +223,7 @@ export const enableShareCompute = async (
     startedAt: Date.now(),
     worker,
     identity,
-    cloudflared: tunnel.child,
-    tunnelUrl: tunnel.url,
+    tunnelUrl,
     announceLabel,
     heartbeat,
     lastEventId,
@@ -315,7 +231,7 @@ export const enableShareCompute = async (
 
   return {
     ok: true,
-    tunnelUrl: tunnel.url,
+    tunnelUrl,
     pubkey: formatPubkey(identity.publicKey),
     eventId: lastEventId,
   };
@@ -333,8 +249,6 @@ export const disableShareCompute = async (): Promise<DisableResult> => {
   active = undefined;
   clearInterval(handle.heartbeat);
 
-  // 1) NIP-09 deletion of the latest announcement event so peers
-  //    don't keep routing to a worker we're about to stop.
   let unpublished = false;
   if (handle.lastEventId) {
     try {
@@ -343,20 +257,11 @@ export const disableShareCompute = async (): Promise<DisableResult> => {
       });
       unpublished = true;
     } catch {
-      // best-effort — the event will eventually expire on TTL
+      // best-effort; the event will eventually expire on TTL
     }
   }
 
-  // 2) Stop the worker (drains in-flight jobs).
   await handle.worker.stop().catch(() => undefined);
-
-  // 3) Kill the tunnel.
-  try {
-    handle.cloudflared.kill();
-  } catch {
-    // best-effort
-  }
-
   return { ok: true, hadActiveShare: true, unpublished };
 };
 

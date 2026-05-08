@@ -141,7 +141,26 @@ export default definePluginEntry({
               };
             }
             if (sub === "on") {
-              const r = await enableShareCompute();
+              const tunnelUrl = tokens[2];
+              if (!tunnelUrl) {
+                return {
+                  text: [
+                    "🦞 **/lobstah share on needs a public URL.**",
+                    "",
+                    "Run a tunnel in a separate terminal first, then pass the URL:",
+                    "",
+                    "```",
+                    "cloudflared tunnel --url http://127.0.0.1:17474",
+                    "# wait for the *.trycloudflare.com URL, then in openclaw chat:",
+                    "/lobstah share on https://your-tunnel.trycloudflare.com",
+                    "```",
+                    "",
+                    "Tailscale, port-forwarding, or a Cloudflare named tunnel all work too — anything where peers can reach `http://<that-url>:<port>` from the internet.",
+                  ].join("\n"),
+                  continueAgent: false,
+                };
+              }
+              const r = await enableShareCompute({ tunnelUrl });
               if ("reasons" in r) {
                 return {
                   text: [
