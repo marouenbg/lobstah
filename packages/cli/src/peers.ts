@@ -120,7 +120,24 @@ export const peers = async (args: string[]): Promise<void> => {
       let added = 0;
       let rejectedUrl = 0;
       const policy = { blockPrivateNetwork: blockPrivateNetwork() };
+
+      // Relays may return multiple events for the same pubkey when a
+      // worker has heartbeated more than once and old events haven't
+      // expired yet. Dedupe by pubkey, keeping the announcement with
+      // the latest `announcedAt`. Without this, addPeer's last-write-
+      // wins behavior makes the resolved URL non-deterministic when
+      // a worker has changed announce-url between heartbeats (e.g.
+      // restarted with a fresh tunnel URL).
+      const latestByPubkey = new Map<string, typeof accepted[number]>();
       for (const ingested of accepted) {
+        const a = ingested.signed.announcement;
+        const prev = latestByPubkey.get(a.pubkey);
+        if (!prev || a.announcedAt > prev.signed.announcement.announcedAt) {
+          latestByPubkey.set(a.pubkey, ingested);
+        }
+      }
+
+      for (const ingested of latestByPubkey.values()) {
         const a = ingested.signed.announcement;
         const safe = await assertSafeUrl(a.url, policy);
         if (!safe.ok) {

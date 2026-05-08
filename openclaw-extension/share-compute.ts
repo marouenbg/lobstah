@@ -28,10 +28,15 @@
 //        publish signed Nostr announcement, schedule heartbeat.
 //   off: NIP-09 deletion, stop worker.
 //
-// State is in-memory. If openclaw restarts while sharing, the worker
-// dies with the host and the stale Nostr announcement expires on its
-// own TTL (~5 min). User has to /lobstah share on again. Auto-resume
-// is roadmap.
+// State is in-memory + a small persisted intent file at
+// ~/.lobstah/share-state.json. The file records "the user wants to be
+// sharing at <url> with <label>"; on plugin activation we read it and
+// re-enable. The file is cleaned up on `share off`. If openclaw
+// restarts while sharing, the resume picks up automatically — but
+// note that the user-supplied tunnel URL has to still be reachable.
+// If they were on a cloudflared quick tunnel that died with their
+// terminal, resume will fail at the announce step and they'll need
+// to start a fresh tunnel and re-toggle.
 
 import { OllamaEngine } from "@lobstah/engine-ollama";
 import {
@@ -48,11 +53,17 @@ import {
   unpublishAnnouncement,
 } from "@lobstah/transport-nostr";
 import { type RunningWorker, startWorker } from "@lobstah/worker";
+import {
+  clearShareIntent,
+  readShareIntent,
+  writeShareIntent,
+} from "./share-state.js";
 
 const WORKER_PORT = 17474;
 const ANNOUNCE_LABEL = "openclaw-shared";
 const ANNOUNCE_TTL_SECONDS = 300;
 const HEARTBEAT_MS = Math.floor((ANNOUNCE_TTL_SECONDS * 1000) / 2);
+
 
 type ActiveShare = {
   startedAt: number;
@@ -229,12 +240,43 @@ export const enableShareCompute = async (opts: {
     lastEventId,
   };
 
+  // Persist the intent so we can auto-resume on next plugin activation.
+  void writeShareIntent({
+    version: 1,
+    enabledSince: active.startedAt,
+    tunnelUrl,
+    announceLabel,
+  });
+
   return {
     ok: true,
     tunnelUrl,
     pubkey: formatPubkey(identity.publicKey),
     eventId: lastEventId,
   };
+};
+
+// Best-effort resume on plugin activation. If the user was sharing
+// when openclaw last shut down, this brings them back online with the
+// same URL + label. Failures are silent (the user can manually
+// /lobstah share on again if the URL has gone stale, e.g. a
+// cloudflared quick tunnel that died with their terminal).
+export const tryResume = async (): Promise<
+  { resumed: false } | { resumed: true; tunnelUrl: string }
+> => {
+  const intent = await readShareIntent();
+  if (!intent) return { resumed: false };
+  const r = await enableShareCompute({
+    tunnelUrl: intent.tunnelUrl,
+    announceLabel: intent.announceLabel,
+  });
+  if ("reasons" in r) {
+    // Resume failed (URL no longer reachable, ollama down, etc.).
+    // Clear the intent so we don't keep retrying every activation.
+    await clearShareIntent();
+    return { resumed: false };
+  }
+  return { resumed: true, tunnelUrl: r.tunnelUrl };
 };
 
 export type DisableResult = {
@@ -245,6 +287,10 @@ export type DisableResult = {
 
 export const disableShareCompute = async (): Promise<DisableResult> => {
   const handle = active;
+  // Always clear persisted intent on disable, even if there's no
+  // active in-memory state — handles the case where the plugin
+  // crashed mid-session and left the file behind.
+  await clearShareIntent();
   if (!handle) return { ok: true, hadActiveShare: false };
   active = undefined;
   clearInterval(handle.heartbeat);

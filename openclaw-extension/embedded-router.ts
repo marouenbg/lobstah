@@ -127,9 +127,24 @@ export const gossipFromNostrInBackground = async (
     const { accepted } = await collectAnnouncements({ relays });
     const policy = { blockPrivateNetwork: BLOCK_PRIVATE_NETWORK };
     let added = 0;
+    // Dedupe by pubkey, keep latest announcedAt. Relays often return
+    // both a stale and a fresh event for the same worker when it has
+    // heartbeated since the previous one expired but before NIP-33
+    // replacement settled. Without this, addPeer's last-write-wins
+    // semantics make the resolved URL non-deterministic when a
+    // worker has changed announce-url between events.
+    const latestByPubkey = new Map<string, (typeof accepted)[number]>();
     for (const ingested of accepted) {
-      const a = ingested.signed.announcement;
       if (!verifyAnnouncement(ingested.signed)) continue;
+      const a = ingested.signed.announcement;
+      const prev = latestByPubkey.get(a.pubkey);
+      if (!prev || a.announcedAt > prev.signed.announcement.announcedAt) {
+        latestByPubkey.set(a.pubkey, ingested);
+      }
+    }
+
+    for (const ingested of latestByPubkey.values()) {
+      const a = ingested.signed.announcement;
       const safe = await assertSafeUrl(a.url, policy);
       if (!safe.ok) continue;
       await addPeer({ pubkey: a.pubkey, url: a.url, label: a.label });
