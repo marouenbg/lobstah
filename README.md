@@ -55,6 +55,17 @@ client  ──/v1/chat/...──► lobstah-router ──forwards──► picke
                           local ledger                   local ledger
 ```
 
+For openclaw users, the same router runs **in-process inside the plugin**
+on activation — no separate `lobstah router start` needed:
+
+```
+   openclaw chat ──/v1/chat/...──► [embedded router]  ──► picked worker
+                                          ▲
+                                          │
+                                  same auto-gossiped
+                                  peers.json
+```
+
 **Strictly opt-in at every layer.** Workers are invisible by default; routers consume nothing by default. Both sides have explicit "participate" commands (`worker start --publish-via-nostr`, `peers gossip-nostr`). A centralized HTTP tracker is also bundled as a fallback for environments where Nostr WebSockets are blocked.
 
 ## Packages
@@ -69,7 +80,7 @@ client  ──/v1/chat/...──► lobstah-router ──forwards──► picke
 | `@lobstah/transport-nostr` | thin wrapper around `nostr-tools`: publish + subscribe + NIP-09 unannounce; npub/nsec encoding |
 | `@lobstah/tracker` | centralized HTTP tracker (legacy fallback for Nostr-blocked environments) |
 | `@lobstah/cli` | `keygen | worker start | router start | tracker start | peers add/remove/list/sync/gossip-nostr | balance` |
-| `openclaw-extension/` | openclaw plugin wrapper (will publish as a separate npm package + ClawHub listing) |
+| `openclaw-extension/` | openclaw plugin (`@lobstah/openclaw-provider` on npm + ClawHub). Auto-starts an in-process router on plugin activation, auto-gossips peers from Nostr, exposes `/lobstah` and `/lobstah share on/off` slash commands inside openclaw chat |
 
 ## Quickstart (Nostr discovery — the canonical path)
 
@@ -118,6 +129,34 @@ lobstah balance
 
 Custom relays: pass `--nostr-relay wss://your-preferred-relay` (repeatable) on either side.
 
+## Quickstart (openclaw users — single-command install)
+
+If you already have [openclaw](https://docs.openclaw.ai) installed, the plugin
+collapses every consumer-side step (CLI install, identity, router daemon,
+peers gossip) into a single install:
+
+```sh
+openclaw plugins install clawhub:@lobstah/openclaw-provider
+# → installs from ClawHub. The plugin auto-starts an in-process router
+#   on 127.0.0.1:17475 and auto-gossips Nostr at activation.
+```
+
+Inside `openclaw chat`:
+
+```
+/lobstah                                  → live network status
+                                            (peers, balance, recent receipts)
+/lobstah share on  https://your-tunnel/   → share idle compute back to the grid
+                                            (you supply the public URL —
+                                            cloudflared, Tailscale, port-forward,
+                                            named tunnel, all work)
+/lobstah share off                        → NIP-09 unannounce + stop worker
+```
+
+Pick **Lobstah grid** as your provider in openclaw and your chat completions
+route through the embedded router → discovered peers → signed receipts in
+the local ledger. No separate `lobstah router start` needed.
+
 ## Quickstart (local-only, no discovery)
 
 ```sh
@@ -161,7 +200,7 @@ lobstah worker start \
 - [x] Centralized HTTP tracker (Node + Cloudflare Workers deploy paths)
 - [x] **Discovery via Nostr relays — fully P2P, zero infrastructure to operate**
 - [x] URL-safety / SSRF defenses (loopback, link-local, metadata)
-- [x] openclaw plugin wrapper (custom auth + onboarding wizard prompts)
+- [x] openclaw plugin: in-process embedded router on activation, auto-gossip Nostr at startup, `/lobstah` slash dashboard + `/lobstah share on|off` toggle for two-way grid mode (consumer + worker from one install)
 - [x] npm publish under `@lobstah/*` ([@lobstah/cli](https://www.npmjs.com/package/@lobstah/cli) + 7 sibling packages)
 - [x] ClawHub listing — [@lobstah/openclaw-provider](https://clawhub.ai/plugins/@lobstah/openclaw-provider) (community channel)
 - [x] **Async job API** (`POST /v1/jobs` + `GET /v1/jobs/:id` + `DELETE /v1/jobs/:id`) — submit-and-poll for cargo workloads. Worker maintains an in-memory FIFO queue with TTL eviction; router maps client-facing job ids to peer + worker-job-id; signed receipts ledgered on first `done` poll (nonce dedupe protects repeats)

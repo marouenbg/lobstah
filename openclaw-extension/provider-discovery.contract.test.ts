@@ -10,6 +10,8 @@ vi.mock("openclaw/plugin-sdk/plugin-entry", () => ({
 
 type OpenClawPluginApi = {
   registerProvider: (provider: unknown) => void;
+  registerCommand: (cmd: unknown) => void;
+  registerControlUiDescriptor: (desc: unknown) => void;
 };
 
 const buildLobstahProviderMock = vi.hoisted(() => vi.fn());
@@ -104,6 +106,10 @@ describe("lobstah provider discovery contract", () => {
       registerProvider: (registeredProvider) => {
         provider = registeredProvider as RegisteredLobstahProvider;
       },
+      // 0.0.11+ also calls these — stub them out for the contract test
+      // so register() doesn't throw before reaching registerProvider.
+      registerCommand: () => undefined,
+      registerControlUiDescriptor: () => undefined,
     } as OpenClawPluginApi);
     expect(provider?.id).toBe("lobstah");
     expect(provider?.discovery?.order).toBe("late");
