@@ -18,6 +18,36 @@ import {
   gossipFromNostrInBackground,
 } from "./embedded-router.js";
 import { renderDashboard } from "./dashboard.js";
+import {
+  disableShareCompute,
+  enableShareCompute,
+  getShareState,
+  type ShareState,
+} from "./share-compute.js";
+
+const renderShareStatus = (state: ShareState): string => {
+  if (!state.enabled) {
+    return [
+      "🦞 **Share-compute: off**",
+      "",
+      "Your Mac is consuming compute from the grid but not contributing.",
+      "Run `/lobstah share on` to start sharing your idle compute via a",
+      "Cloudflare quick tunnel + Nostr announcement.",
+    ].join("\n");
+  }
+  const dur = state.startedAt ? Math.round((Date.now() - state.startedAt) / 1000) : 0;
+  return [
+    "🦞 **Share-compute: on**",
+    "",
+    `- public URL: ${state.tunnelUrl ?? "?"}`,
+    `- worker pubkey: \`${(state.pubkey ?? "?").slice(0, 24)}…\``,
+    `- worker port: ${state.workerPort ?? "?"} (loopback; tunnel forwards public traffic)`,
+    `- uptime: ${dur}s`,
+    `- announced as: ${state.announceLabel ?? "?"}`,
+    "",
+    "_Run `/lobstah share off` to stop._",
+  ].join("\n");
+};
 
 const PROVIDER_ID = "lobstah";
 
@@ -90,17 +120,80 @@ export default definePluginEntry({
     // /lobstah workers) but for now the whole picture in one view.
     api.registerCommand({
       name: "lobstah",
-      description: "Show the lobstah grid status: peers, balance, recent receipts",
-      acceptsArgs: false,
+      description:
+        "Lobstah grid: status, peers, balance, share-compute toggle. Subcommands: share on|off|status",
+      acceptsArgs: true,
       requireAuth: true,
-      handler: async () => {
+      handler: async (ctx: { args?: string }) => {
         try {
-          const text = await renderDashboard();
-          return { text, continueAgent: false };
+          const args = (ctx.args ?? "").trim();
+          if (!args) {
+            const text = await renderDashboard({ shareState: getShareState() });
+            return { text, continueAgent: false };
+          }
+          const tokens = args.split(/\s+/);
+          const [head, sub] = tokens;
+          if (head === "share") {
+            if (!sub || sub === "status") {
+              return {
+                text: renderShareStatus(getShareState()),
+                continueAgent: false,
+              };
+            }
+            if (sub === "on") {
+              const r = await enableShareCompute();
+              if ("reasons" in r) {
+                return {
+                  text: [
+                    "🦞 **Could not enable share-compute** — fix these and try again:",
+                    "",
+                    ...r.reasons.map((s) => `- ${s}`),
+                  ].join("\n"),
+                  continueAgent: false,
+                };
+              }
+              return {
+                text: [
+                  "🦞 **Sharing your compute** — your Mac is now a worker on the lobstah grid.",
+                  "",
+                  `- public URL: ${r.tunnelUrl}`,
+                  `- worker pubkey: \`${r.pubkey.slice(0, 24)}…\``,
+                  `- announced via Nostr (event \`${r.eventId?.slice(0, 12) ?? "?"}…\`)`,
+                  "",
+                  "_Run `/lobstah share off` to stop. The Nostr announcement also expires automatically after 5 min if heartbeats stop._",
+                ].join("\n"),
+                continueAgent: false,
+              };
+            }
+            if (sub === "off") {
+              const r = await disableShareCompute();
+              if (!r.hadActiveShare) {
+                return {
+                  text: "🦞 _Share-compute is not currently active — nothing to disable._",
+                  continueAgent: false,
+                };
+              }
+              return {
+                text: [
+                  "🦞 **Stopped sharing compute.**",
+                  r.unpublished
+                    ? "Sent NIP-09 deletion to relays — peers will drop you on next gossip."
+                    : "Could not send NIP-09 deletion; the announcement will expire on TTL (~5 min).",
+                ].join("\n"),
+                continueAgent: false,
+              };
+            }
+          }
+          return {
+            text:
+              "🦞 _Unknown subcommand. Try `/lobstah` (status), " +
+              "`/lobstah share on`, `/lobstah share off`, `/lobstah share status`._",
+            continueAgent: false,
+          };
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
           return {
-            text: `🦞 _Lobstah dashboard failed:_ ${msg}`,
+            text: `🦞 _Lobstah command failed:_ ${msg}`,
             continueAgent: false,
           };
         }

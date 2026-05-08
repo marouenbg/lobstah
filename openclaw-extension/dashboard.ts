@@ -51,18 +51,44 @@ const fmtTime = (ms: number): string => {
 const truncatePubkey = (pk: string, head = 16): string =>
   pk.length > head ? `${pk.slice(0, head)}…` : pk;
 
+export type DashboardShareState = {
+  enabled: boolean;
+  tunnelUrl?: string;
+  startedAt?: number;
+  pubkey?: string;
+  announceLabel?: string;
+};
+
 export type DashboardOptions = {
   // Cap probe parallelism; default reasonable for a few peers.
   maxParallel?: number;
+  // Optional snapshot of "are we sharing compute right now?" — surfaced
+  // as a top-line banner. The plugin entry knows this; the dashboard
+  // helper takes it as input rather than reaching back into the share-
+  // compute module so it stays pure / testable.
+  shareState?: DashboardShareState;
 };
 
 // Build the markdown body. Never throws — partial failures degrade
 // gracefully (a section may be empty rather than the whole thing
 // erroring out).
-export const renderDashboard = async (_opts: DashboardOptions = {}): Promise<string> => {
+export const renderDashboard = async (opts: DashboardOptions = {}): Promise<string> => {
   const lines: string[] = [];
   lines.push("🦞 **Lobstah network status**");
   lines.push("");
+
+  // ── Share-compute status banner ──────────────────────────────
+  if (opts.shareState) {
+    if (opts.shareState.enabled) {
+      const dur = opts.shareState.startedAt
+        ? Math.round((Date.now() - opts.shareState.startedAt) / 1000)
+        : 0;
+      lines.push(`📡 **Sharing compute** for ${dur}s · ${opts.shareState.tunnelUrl ?? "?"}`);
+    } else {
+      lines.push("📡 _Not sharing compute. `/lobstah share on` to start._");
+    }
+    lines.push("");
+  }
 
   // ── Workers ──────────────────────────────────────────────────
   let peers: Peer[] = [];
