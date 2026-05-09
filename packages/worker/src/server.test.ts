@@ -188,3 +188,216 @@ describe("worker streaming SSE contract", () => {
     expect(signed.receipt.outputTokens).toBe(1);
   });
 });
+
+describe("worker credit enforcement", () => {
+  // Mock engine that records request count + simulates a small inference.
+  const recordingEngine = (
+    inputTokens = 5,
+    outputTokens = 5,
+  ): WorkerEngine & { calls: number } => {
+    const e = {
+      name: "mock",
+      calls: 0,
+      listModels: async () => ["llama3.1:8b"],
+      chat: async () => {
+        e.calls += 1;
+        return {
+          payload: { id: "ok", choices: [], usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens } },
+          inputTokens,
+          outputTokens,
+        };
+      },
+      chatStream: async () => {
+        throw new Error("not used");
+      },
+    };
+    return e;
+  };
+
+  // Pre-write receipts to LOBSTAH_LEDGER that drain the requester's balance
+  // by N tokens. Each receipt is signed by a transient worker identity so
+  // it's structurally valid (verifyReceipt would pass), but the worker we
+  // build below uses a SEPARATE identity, so these "previous transactions"
+  // belong to a different worker — exactly what we want to simulate
+  // "requester has spent N tokens with various workers."
+  const drainRequester = async (requesterPk: string, totalTokens: number): Promise<void> => {
+    const { signReceipt, generateNonce } = await import("@lobstah/protocol");
+    const { append: appendLedger } = await import("@lobstah/ledger");
+    let remaining = totalTokens;
+    while (remaining > 0) {
+      const chunk = Math.min(remaining, 1000);
+      const ghostWorker = generateIdentity();
+      const ghostWorkerPk = formatPubkey(ghostWorker.publicKey);
+      const signed = signReceipt(
+        {
+          version: 1,
+          jobId: `drain-${remaining}`,
+          nonce: generateNonce(),
+          requesterPubkey: requesterPk,
+          workerPubkey: ghostWorkerPk,
+          model: "drain",
+          inputTokens: chunk,
+          outputTokens: 0,
+          startedAt: Date.now() - 1000,
+          completedAt: Date.now(),
+        },
+        ghostWorker.secretKey,
+      );
+      await appendLedger(signed);
+      remaining -= chunk;
+    }
+  };
+
+  const sendChat = async (
+    app: ReturnType<typeof buildWorkerApp>["app"],
+    requesterPk: string | null,
+  ) => {
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (requesterPk !== null) headers[REQUESTER_HEADER] = requesterPk;
+    return app.fetch(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          model: "llama3.1:8b",
+          stream: false,
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      }),
+    );
+  };
+
+  it("EDGE 1 — fresh requester (never seen) gets bootstrap allowance, request succeeds", async () => {
+    const worker = generateIdentity();
+    const fresh = generateIdentity();
+    const engine = recordingEngine();
+    const { app, jobs } = buildWorkerApp({
+      identity: worker,
+      engine,
+      // Critical: turn off Nostr publish so the test doesn't try to
+      // hit live relays.
+      publishReceiptsToNostr: false,
+    });
+    const res = await sendChat(app, formatPubkey(fresh.publicKey));
+    expect(res.status).toBe(200);
+    expect(engine.calls).toBe(1);
+    jobs.shutdown();
+  });
+
+  it("EDGE 2 — drained requester (available <= 0) gets 402, engine never called", async () => {
+    const { BOOTSTRAP_ALLOWANCE_TOKENS } = await import("@lobstah/protocol");
+    const worker = generateIdentity();
+    const drained = generateIdentity();
+    const drainedPk = formatPubkey(drained.publicKey);
+
+    // Drain to exactly 0 available.
+    await drainRequester(drainedPk, BOOTSTRAP_ALLOWANCE_TOKENS);
+
+    const engine = recordingEngine();
+    const { app, jobs } = buildWorkerApp({
+      identity: worker,
+      engine,
+      publishReceiptsToNostr: false,
+    });
+
+    const res = await sendChat(app, drainedPk);
+    expect(res.status).toBe(402);
+    const body = (await res.json()) as { error: { type: string; availableTokens: number } };
+    expect(body.error.type).toBe("insufficient_credit");
+    expect(body.error.availableTokens).toBe(0);
+    expect(engine.calls).toBe(0); // no work done
+    jobs.shutdown();
+  });
+
+  it("EDGE 3 — anonymous request (no REQUESTER_HEADER) bypasses the check", async () => {
+    const worker = generateIdentity();
+    const engine = recordingEngine();
+    const { app, jobs } = buildWorkerApp({
+      identity: worker,
+      engine,
+      publishReceiptsToNostr: false,
+    });
+    const res = await sendChat(app, null);
+    expect(res.status).toBe(200);
+    expect(engine.calls).toBe(1);
+    jobs.shutdown();
+  });
+
+  it("EDGE 4 — enforceBalance: false disables the gate entirely", async () => {
+    const { BOOTSTRAP_ALLOWANCE_TOKENS } = await import("@lobstah/protocol");
+    const worker = generateIdentity();
+    const drained = generateIdentity();
+    const drainedPk = formatPubkey(drained.publicKey);
+    await drainRequester(drainedPk, BOOTSTRAP_ALLOWANCE_TOKENS + 5000); // way overdrawn
+
+    const engine = recordingEngine();
+    const { app, jobs } = buildWorkerApp({
+      identity: worker,
+      engine,
+      enforceBalance: false,
+      publishReceiptsToNostr: false,
+    });
+
+    const res = await sendChat(app, drainedPk);
+    expect(res.status).toBe(200); // no 402 — enforcement off
+    expect(engine.calls).toBe(1);
+    jobs.shutdown();
+  });
+
+  it("EDGE 5 — sequential drain: balance decrements; 402 fires on the request that would push past 0", async () => {
+    const { BOOTSTRAP_ALLOWANCE_TOKENS } = await import("@lobstah/protocol");
+    const worker = generateIdentity();
+    const requester = generateIdentity();
+    const requesterPk = formatPubkey(requester.publicKey);
+
+    // Drain to leave only ~50 tokens available.
+    await drainRequester(requesterPk, BOOTSTRAP_ALLOWANCE_TOKENS - 50);
+
+    // Mock engine that records request count + drains exactly 30 tokens
+    // per call (15+15).
+    const engine = recordingEngine(15, 15);
+    const { app, jobs } = buildWorkerApp({
+      identity: worker,
+      engine,
+      publishReceiptsToNostr: false,
+    });
+
+    // Request 1: available=50 > 0 → serves, drains 30, available=20.
+    const r1 = await sendChat(app, requesterPk);
+    expect(r1.status).toBe(200);
+    expect(engine.calls).toBe(1);
+
+    // Request 2: available=20 > 0 → serves, drains 30, available=-10.
+    const r2 = await sendChat(app, requesterPk);
+    expect(r2.status).toBe(200);
+    expect(engine.calls).toBe(2);
+
+    // Request 3: available=-10 NOT > 0 → 402, no engine call.
+    const r3 = await sendChat(app, requesterPk);
+    expect(r3.status).toBe(402);
+    expect(engine.calls).toBe(2); // still 2 — third request didn't hit engine
+
+    jobs.shutdown();
+  });
+
+  it("EDGE 6 — Sybil: each fresh identity gets its own 10K (this is the known limitation)", async () => {
+    const worker = generateIdentity();
+    const engine = recordingEngine();
+    const { app, jobs } = buildWorkerApp({
+      identity: worker,
+      engine,
+      publishReceiptsToNostr: false,
+    });
+
+    // Five fresh identities, each making a request. All succeed because
+    // each gets its own bootstrap allowance. This documents the Sybil
+    // hole: an attacker can mint identities to claim free credits.
+    for (let i = 0; i < 5; i++) {
+      const sybil = generateIdentity();
+      const res = await sendChat(app, formatPubkey(sybil.publicKey));
+      expect(res.status).toBe(200);
+    }
+    expect(engine.calls).toBe(5);
+    jobs.shutdown();
+  });
+});
