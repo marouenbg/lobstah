@@ -49,6 +49,10 @@ export type JobStoreOptions = {
   // ignorant of Nostr — it just hands the signed receipt to the
   // callback after appendLedger.
   onReceiptSigned?: (signed: import("@lobstah/protocol").SignedReceipt) => void;
+  // Explicit ledger path. Defaults to LOBSTAH_LEDGER env / standard
+  // home-dir location. Tests should pass this explicitly to avoid
+  // process.env races in parallel test pools.
+  ledgerPath?: string;
 };
 
 type InternalJob = JobRecord & {
@@ -295,7 +299,7 @@ export class JobStore {
       completedAt,
     };
     const signed = signReceipt(receipt, this.opts.identity.secretKey);
-    await appendLedger(signed);
+    await appendLedger(signed, this.opts.ledgerPath);
     this.opts.onReceiptSigned?.(signed);
 
     job.status = "done";

@@ -70,6 +70,12 @@ export type RunningRouter = {
 
 export type BuildRouterAppOptions = {
   identity: Identity;
+  /**
+   * Explicit ledger path. Defaults to the LOBSTAH_LEDGER env or
+   * `~/.lobstah/ledger.jsonl`. Tests pass this to avoid env-var
+   * races in parallel test pools.
+   */
+  ledgerPath?: string;
 };
 
 export type RouterApp = {
@@ -83,6 +89,7 @@ const tryAcceptReceipt = async (
   b64: string,
   ourPubkey: string,
   peerPubkey: string,
+  ledgerPath?: string,
 ): Promise<void> => {
   let signed: SignedReceipt;
   try {
@@ -107,7 +114,7 @@ const tryAcceptReceipt = async (
     process.stderr.write(`router: rejected receipt from ${peerPubkey} (nonce replay)\n`);
     return;
   }
-  await append(signed);
+  await append(signed, ledgerPath);
 };
 
 type UpstreamAttempt = {
@@ -184,6 +191,7 @@ const openUpstreamWithFallback = async (
 
 export const buildRouterApp = (opts: BuildRouterAppOptions): RouterApp => {
   const ourPubkey = formatPubkey(opts.identity.publicKey);
+  const ledgerPath = opts.ledgerPath; // undefined → ledger lib uses env/default
 
   const app = new Hono();
 
@@ -192,7 +200,7 @@ export const buildRouterApp = (opts: BuildRouterAppOptions): RouterApp => {
   app.get("/peers", async (c) => c.json(await loadPeers()));
 
   app.get("/balance", async (c) => {
-    const summary = computeBalances(await readAll());
+    const summary = computeBalances(await readAll(ledgerPath));
     const self = summary.perPeer.get(ourPubkey) ?? {
       pubkey: ourPubkey,
       earned: 0,
@@ -221,7 +229,7 @@ export const buildRouterApp = (opts: BuildRouterAppOptions): RouterApp => {
       1,
       Math.min(500, Number.isFinite(Number(limitRaw)) ? Number(limitRaw) : 50),
     );
-    const all = await readAll();
+    const all = await readAll(ledgerPath);
     const slice = all.slice(-limit).reverse();
     return c.json({
       total: all.length,
@@ -338,7 +346,7 @@ export const buildRouterApp = (opts: BuildRouterAppOptions): RouterApp => {
 
             if (event.startsWith(`${RECEIPT_SSE_PREFIX}:`)) {
               const b64 = event.slice(RECEIPT_SSE_PREFIX.length + 1).trim();
-              await tryAcceptReceipt(b64, ourPubkey, peerPubkey);
+              await tryAcceptReceipt(b64, ourPubkey, peerPubkey, ledgerPath);
               continue;
             }
             await sse.write(`${event}\n\n`);
@@ -352,7 +360,7 @@ export const buildRouterApp = (opts: BuildRouterAppOptions): RouterApp => {
     const receiptHdr = upstream.headers.get(RECEIPT_HEADER);
 
     if (receiptHdr) {
-      await tryAcceptReceipt(receiptHdr, ourPubkey, peer.pubkey);
+      await tryAcceptReceipt(receiptHdr, ourPubkey, peer.pubkey, ledgerPath);
     }
 
     const headers: Record<string, string> = { "content-type": upstreamCT };
@@ -482,7 +490,7 @@ export const buildRouterApp = (opts: BuildRouterAppOptions): RouterApp => {
     // also defense-in-depth; this just avoids extra work on repeat polls).
     if (job.status === "done" && job.signedReceipt && !mapping.receiptLedgered) {
       const b64 = Buffer.from(JSON.stringify(job.signedReceipt), "utf8").toString("base64");
-      await tryAcceptReceipt(b64, ourPubkey, mapping.peerPubkey);
+      await tryAcceptReceipt(b64, ourPubkey, mapping.peerPubkey, ledgerPath);
       mapping.receiptLedgered = true;
     }
 

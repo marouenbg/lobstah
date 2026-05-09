@@ -26,10 +26,15 @@ const ollamaContentChunk = (delta: string): string =>
   `data: ${JSON.stringify({ choices: [{ delta: { content: delta } }] })}\n\n`;
 
 let tmpDir: string;
+let ledgerPath: string;
 
 beforeEach(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), "lobstah-router-test-"));
-  process.env.LOBSTAH_LEDGER = join(tmpDir, "ledger.jsonl");
+  ledgerPath = join(tmpDir, "ledger.jsonl");
+  // Peers path is still env-driven (peers.ts hasn't been refactored
+  // yet to take an explicit path); the ledger path is now passed
+  // explicitly to buildRouterApp({ ledgerPath }) so it's race-free
+  // even with parallel tests.
   process.env.LOBSTAH_PEERS = join(tmpDir, "peers.json");
   resetPeerState();
   resetNonceStore();
@@ -38,7 +43,6 @@ beforeEach(async () => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  delete process.env.LOBSTAH_LEDGER;
   delete process.env.LOBSTAH_PEERS;
 });
 
@@ -101,7 +105,7 @@ describe("router streaming SSE contract", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const { app } = buildRouterApp({ identity: router });
+    const { app } = buildRouterApp({ identity: router, ledgerPath });
     const req = new Request("http://localhost/v1/chat/completions", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -122,7 +126,7 @@ describe("router streaming SSE contract", () => {
     expect(events.filter((e) => e.startsWith("data: ")).length).toBe(3);
     expect(events.at(-1)).toBe("data: [DONE]");
 
-    const ledger = await readAll(process.env.LOBSTAH_LEDGER);
+    const ledger = await readAll(ledgerPath);
     expect(ledger.length).toBe(1);
     expect(ledger[0].receipt.nonce).toBe(receipt.nonce);
     expect(ledger[0].receipt.workerPubkey).toBe(workerPk);
@@ -184,7 +188,7 @@ describe("router streaming SSE contract", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const { app } = buildRouterApp({ identity: router });
+    const { app } = buildRouterApp({ identity: router, ledgerPath });
     const makeReq = () =>
       new Request("http://localhost/v1/chat/completions", {
         method: "POST",
@@ -201,7 +205,7 @@ describe("router streaming SSE contract", () => {
     const res2 = await app.fetch(makeReq());
     await res2.text();
 
-    const ledger = await readAll(process.env.LOBSTAH_LEDGER);
+    const ledger = await readAll(ledgerPath);
     expect(ledger.length).toBe(1);
   });
 });

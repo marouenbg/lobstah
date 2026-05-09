@@ -8,7 +8,7 @@ import {
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { JobStore } from "./jobs.js";
 
 const stallableEngine = (
@@ -99,20 +99,22 @@ const waitFor = async (
   }
 };
 
+// Per-test ledger path. Each test pulls `ledgerPath` from this closure
+// and passes it explicitly to `new JobStore({ ledgerPath })` — no
+// reliance on process.env so the parallel vitest pool can't race
+// between concurrent tests.
+let ledgerPath = "";
+
 beforeEach(async () => {
   const dir = await mkdtemp(join(tmpdir(), "lobstah-jobs-test-"));
-  process.env.LOBSTAH_LEDGER = join(dir, "ledger.jsonl");
-});
-
-afterEach(() => {
-  delete process.env.LOBSTAH_LEDGER;
+  ledgerPath = join(dir, "ledger.jsonl");
 });
 
 describe("JobStore", () => {
   it("submit + immediately-poll returns queued or running", async () => {
     const id = generateIdentity();
     const stall = stallableEngine();
-    const store = new JobStore({ identity: id, engine: stall.engine, jobsLogPath: null });
+    const store = new JobStore({ identity: id, engine: stall.engine, jobsLogPath: null, ledgerPath });
     const job = store.submit(makeReq(), formatPubkey(generateIdentity().publicKey));
     expect(job.status).toBe("queued");
     expect(job.jobId).toMatch(/^[0-9a-f-]{36}$/);
@@ -132,7 +134,7 @@ describe("JobStore", () => {
     const requester = generateIdentity();
     const requesterPk = formatPubkey(requester.publicKey);
     const stall = stallableEngine();
-    const store = new JobStore({ identity: worker, engine: stall.engine, jobsLogPath: null });
+    const store = new JobStore({ identity: worker, engine: stall.engine, jobsLogPath: null, ledgerPath });
 
     const submitted = store.submit(makeReq(), requesterPk);
     await waitFor(() => store.get(submitted.jobId)?.status === "running");
@@ -156,7 +158,7 @@ describe("JobStore", () => {
   it("captures engine errors and marks job error", async () => {
     const worker = generateIdentity();
     const stall = stallableEngine();
-    const store = new JobStore({ identity: worker, engine: stall.engine, jobsLogPath: null });
+    const store = new JobStore({ identity: worker, engine: stall.engine, jobsLogPath: null, ledgerPath });
     const submitted = store.submit(makeReq(), "lob1xxx");
     await waitFor(() => store.get(submitted.jobId)?.status === "running");
     stall.fail(new Error("ollama exploded"));
@@ -171,7 +173,7 @@ describe("JobStore", () => {
   it("cancel works on queued jobs only", async () => {
     const worker = generateIdentity();
     const stall = stallableEngine();
-    const store = new JobStore({ identity: worker, engine: stall.engine, jobsLogPath: null });
+    const store = new JobStore({ identity: worker, engine: stall.engine, jobsLogPath: null, ledgerPath });
     // Submit two: first will start running (and stall), second stays queued
     const job1 = store.submit(makeReq(), "lob1xxx");
     const job2 = store.submit(makeReq(), "lob1xxx");
@@ -191,7 +193,7 @@ describe("JobStore", () => {
   it("size() reflects current state", async () => {
     const worker = generateIdentity();
     const stall = stallableEngine();
-    const store = new JobStore({ identity: worker, engine: stall.engine, jobsLogPath: null });
+    const store = new JobStore({ identity: worker, engine: stall.engine, jobsLogPath: null, ledgerPath });
     expect(store.size()).toEqual({ queued: 0, running: 0, done: 0, error: 0 });
     store.submit(makeReq(), "lob1xxx");
     store.submit(makeReq(), "lob1xxx");
@@ -209,7 +211,7 @@ describe("JobStore", () => {
     const store = new JobStore({
       identity: worker,
       engine: multi.engine,
-      jobsLogPath: null,
+      jobsLogPath: null, ledgerPath,
     });
     expect(store.getConcurrency()).toBe(1);
     store.submit(makeReq(), "lob1xxx");
@@ -236,7 +238,7 @@ describe("JobStore", () => {
     const store = new JobStore({
       identity: worker,
       engine: multi.engine,
-      jobsLogPath: null,
+      jobsLogPath: null, ledgerPath,
       concurrency: 3,
     });
     expect(store.getConcurrency()).toBe(3);
@@ -270,7 +272,7 @@ describe("JobStore", () => {
         new JobStore({
           identity: worker,
           engine: multi.engine,
-          jobsLogPath: null,
+          jobsLogPath: null, ledgerPath,
           concurrency: 0,
         }),
     ).toThrow(/concurrency/);
@@ -279,7 +281,7 @@ describe("JobStore", () => {
         new JobStore({
           identity: worker,
           engine: multi.engine,
-          jobsLogPath: null,
+          jobsLogPath: null, ledgerPath,
           concurrency: -1,
         }),
     ).toThrow(/concurrency/);
@@ -288,7 +290,7 @@ describe("JobStore", () => {
         new JobStore({
           identity: worker,
           engine: multi.engine,
-          jobsLogPath: null,
+          jobsLogPath: null, ledgerPath,
           concurrency: 1.5,
         }),
     ).toThrow(/concurrency/);
@@ -304,7 +306,7 @@ describe("JobStore persistence", () => {
     const store = new JobStore({
       identity: worker,
       engine: stall.engine,
-      jobsLogPath: logPath,
+      jobsLogPath: logPath, ledgerPath,
     });
     const submitted = store.submit(makeReq(), "lob1xxx");
     await waitFor(() => store.get(submitted.jobId)?.status === "running");
@@ -330,7 +332,7 @@ describe("JobStore persistence", () => {
     const a = new JobStore({
       identity: worker,
       engine: stall.engine,
-      jobsLogPath: logPath,
+      jobsLogPath: logPath, ledgerPath,
     });
     const submitted = a.submit(makeReq(), "lob1xxx");
     await waitFor(() => a.get(submitted.jobId)?.status === "running");
@@ -342,7 +344,7 @@ describe("JobStore persistence", () => {
     const b = new JobStore({
       identity: worker,
       engine: stall.engine,
-      jobsLogPath: logPath,
+      jobsLogPath: logPath, ledgerPath,
     });
     const result = await b.hydrate();
     expect(result.loaded).toBe(1);
@@ -374,7 +376,7 @@ describe("JobStore persistence", () => {
     const store = new JobStore({
       identity: worker,
       engine: stall2.engine,
-      jobsLogPath: logPath,
+      jobsLogPath: logPath, ledgerPath,
     });
     const result = await store.hydrate();
     expect(result.loaded).toBe(1);

@@ -54,6 +54,14 @@ export type WorkerOptions = {
    * lobstah default relays (damus.io, nos.lol, relay.nostr.band).
    */
   nostrRelays?: ReadonlyArray<string>;
+  /**
+   * Explicit ledger path. Defaults to the LOBSTAH_LEDGER env var or
+   * `~/.lobstah/ledger.jsonl`. Tests should pass this explicitly to
+   * avoid `process.env` races when many workers run in parallel
+   * (vitest's parallel pool was leaking ephemeral test pubkeys into
+   * the user's real ledger before this option existed).
+   */
+  ledgerPath?: string;
 };
 
 export type RunningWorker = {
@@ -73,6 +81,7 @@ export type BuildWorkerAppOptions = {
   enforceBalance?: boolean;
   publishReceiptsToNostr?: boolean;
   nostrRelays?: ReadonlyArray<string>;
+  ledgerPath?: string;
 };
 
 export type WorkerApp = {
@@ -92,6 +101,7 @@ export const buildWorkerApp = (opts: BuildWorkerAppOptions): WorkerApp => {
   const enforceBalance = opts.enforceBalance ?? true;
   const publishNostr = opts.publishReceiptsToNostr ?? true;
   const nostrRelays = opts.nostrRelays ?? DEFAULT_RELAYS;
+  const ledgerPath = opts.ledgerPath; // undefined → ledger uses default (env or ~/.lobstah)
   const workerPubkey = formatPubkey(opts.identity.publicKey);
 
   // Pre-flight credit check: refuse the request if the requester
@@ -109,7 +119,7 @@ export const buildWorkerApp = (opts: BuildWorkerAppOptions): WorkerApp => {
       // pubkey; bypassing here is defensive against test setups.
       return { ok: true, available: Number.POSITIVE_INFINITY };
     }
-    const ledger = await readAllLedger();
+    const ledger = await readAllLedger(ledgerPath);
     const available = availableCredits(requesterPubkey, ledger);
     return { ok: available > 0, available };
   };
@@ -152,6 +162,7 @@ export const buildWorkerApp = (opts: BuildWorkerAppOptions): WorkerApp => {
     identity: opts.identity,
     engine,
     concurrency: opts.concurrency,
+    ledgerPath,
     onReceiptSigned: publishToNostrInBackground,
   });
   const app = new Hono();
@@ -267,7 +278,7 @@ export const buildWorkerApp = (opts: BuildWorkerAppOptions): WorkerApp => {
           startedAt,
         );
         const signed = signReceipt(receipt, opts.identity.secretKey);
-        await appendLedger(signed);
+        await appendLedger(signed, ledgerPath);
         publishToNostrInBackground(signed);
         const b64 = Buffer.from(JSON.stringify(signed), "utf8").toString("base64");
         await sse.write(`${RECEIPT_SSE_PREFIX}:${b64}\n\n`);
@@ -292,7 +303,7 @@ export const buildWorkerApp = (opts: BuildWorkerAppOptions): WorkerApp => {
       startedAt,
     );
     const signed = signReceipt(receipt, opts.identity.secretKey);
-    await appendLedger(signed);
+    await appendLedger(signed, ledgerPath);
     publishToNostrInBackground(signed);
     c.header(RECEIPT_HEADER, Buffer.from(JSON.stringify(signed), "utf8").toString("base64"));
     return c.json(result.payload);
@@ -364,6 +375,7 @@ export const startWorker = async (opts: WorkerOptions): Promise<RunningWorker> =
     enforceBalance: opts.enforceBalance,
     publishReceiptsToNostr: opts.publishReceiptsToNostr,
     nostrRelays: opts.nostrRelays,
+    ledgerPath: opts.ledgerPath,
   });
 
   // Recover any persisted jobs from a prior run (queued + running both end

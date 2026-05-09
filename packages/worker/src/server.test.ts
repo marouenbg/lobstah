@@ -11,7 +11,7 @@ import {
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { buildWorkerApp } from "./server.js";
 
 const enc = new TextEncoder();
@@ -52,17 +52,19 @@ const mockEngine = (
   }),
 });
 
-beforeEach(async () => {
+// Per-test isolated ledger path. Each test calls `await freshLedger()`
+// at its top to get a unique path, then passes it explicitly to
+// buildWorkerApp({ ledgerPath }). Avoids the process.env race the
+// vitest parallel pool used to leak through into the user's real
+// ~/.lobstah/ledger.jsonl.
+const freshLedger = async (): Promise<string> => {
   const dir = await mkdtemp(join(tmpdir(), "lobstah-worker-test-"));
-  process.env.LOBSTAH_LEDGER = join(dir, "ledger.jsonl");
-});
-
-afterEach(() => {
-  delete process.env.LOBSTAH_LEDGER;
-});
+  return join(dir, "ledger.jsonl");
+};
 
 describe("worker streaming SSE contract", () => {
   it("forwards content + usage chunks, embeds signed receipt, ends with [DONE]", async () => {
+    const ledgerPath = await freshLedger();
     const worker = generateIdentity();
     const requester = generateIdentity();
     const requesterPk = formatPubkey(requester.publicKey);
@@ -76,6 +78,8 @@ describe("worker streaming SSE contract", () => {
         ollamaUsageChunk(7, 2),
         DONE_CHUNK,
       ]),
+      ledgerPath,
+      publishReceiptsToNostr: false,
     });
 
     const req = new Request("http://localhost/v1/chat/completions", {
@@ -130,13 +134,14 @@ describe("worker streaming SSE contract", () => {
       },
     };
 
-    const defaulted = buildWorkerApp({ identity: worker, engine });
+    const ledgerPath = await freshLedger();
+    const defaulted = buildWorkerApp({ identity: worker, engine, ledgerPath, publishReceiptsToNostr: false });
     const r1 = await defaulted.app.fetch(new Request("http://localhost/capacity"));
     const c1 = (await r1.json()) as { tier?: string };
     expect(c1.tier).toBe("best-effort");
     defaulted.jobs.shutdown();
 
-    const tagged = buildWorkerApp({ identity: worker, engine, tier: "batch" });
+    const tagged = buildWorkerApp({ identity: worker, engine, tier: "batch", ledgerPath, publishReceiptsToNostr: false });
     const r2 = await tagged.app.fetch(new Request("http://localhost/capacity"));
     const c2 = (await r2.json()) as { tier?: string };
     expect(c2.tier).toBe("batch");
@@ -144,6 +149,7 @@ describe("worker streaming SSE contract", () => {
   });
 
   it("non-streaming path returns receipt as header", async () => {
+    const ledgerPath = await freshLedger();
     const worker = generateIdentity();
     const requester = generateIdentity();
 
@@ -164,7 +170,7 @@ describe("worker streaming SSE contract", () => {
       },
     };
 
-    const { app } = buildWorkerApp({ identity: worker, engine });
+    const { app } = buildWorkerApp({ identity: worker, engine, ledgerPath, publishReceiptsToNostr: false });
     const req = new Request("http://localhost/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -214,13 +220,19 @@ describe("worker credit enforcement", () => {
     return e;
   };
 
-  // Pre-write receipts to LOBSTAH_LEDGER that drain the requester's balance
-  // by N tokens. Each receipt is signed by a transient worker identity so
-  // it's structurally valid (verifyReceipt would pass), but the worker we
-  // build below uses a SEPARATE identity, so these "previous transactions"
-  // belong to a different worker — exactly what we want to simulate
-  // "requester has spent N tokens with various workers."
-  const drainRequester = async (requesterPk: string, totalTokens: number): Promise<void> => {
+  // Pre-write receipts to a SPECIFIC ledger path that drain the requester's
+  // balance by N tokens. Each receipt is signed by a transient worker
+  // identity so it's structurally valid (verifyReceipt would pass), but
+  // the worker we build below uses a SEPARATE identity, so these
+  // "previous transactions" belong to a different worker — exactly what
+  // we want to simulate "requester has spent N tokens with various
+  // workers." The explicit ledgerPath isolates each test from
+  // process.env races in the parallel pool.
+  const drainRequester = async (
+    requesterPk: string,
+    totalTokens: number,
+    ledgerPath: string,
+  ): Promise<void> => {
     const { signReceipt, generateNonce } = await import("@lobstah/protocol");
     const { append: appendLedger } = await import("@lobstah/ledger");
     let remaining = totalTokens;
@@ -243,7 +255,7 @@ describe("worker credit enforcement", () => {
         },
         ghostWorker.secretKey,
       );
-      await appendLedger(signed);
+      await appendLedger(signed, ledgerPath);
       remaining -= chunk;
     }
   };
@@ -268,12 +280,14 @@ describe("worker credit enforcement", () => {
   };
 
   it("EDGE 1 — fresh requester (never seen) gets bootstrap allowance, request succeeds", async () => {
+    const ledgerPath = await freshLedger();
     const worker = generateIdentity();
     const fresh = generateIdentity();
     const engine = recordingEngine();
     const { app, jobs } = buildWorkerApp({
       identity: worker,
       engine,
+      ledgerPath,
       // Critical: turn off Nostr publish so the test doesn't try to
       // hit live relays.
       publishReceiptsToNostr: false,
@@ -285,18 +299,20 @@ describe("worker credit enforcement", () => {
   });
 
   it("EDGE 2 — drained requester (available <= 0) gets 402, engine never called", async () => {
+    const ledgerPath = await freshLedger();
     const { BOOTSTRAP_ALLOWANCE_TOKENS } = await import("@lobstah/protocol");
     const worker = generateIdentity();
     const drained = generateIdentity();
     const drainedPk = formatPubkey(drained.publicKey);
 
     // Drain to exactly 0 available.
-    await drainRequester(drainedPk, BOOTSTRAP_ALLOWANCE_TOKENS);
+    await drainRequester(drainedPk, BOOTSTRAP_ALLOWANCE_TOKENS, ledgerPath);
 
     const engine = recordingEngine();
     const { app, jobs } = buildWorkerApp({
       identity: worker,
       engine,
+      ledgerPath,
       publishReceiptsToNostr: false,
     });
 
@@ -310,11 +326,13 @@ describe("worker credit enforcement", () => {
   });
 
   it("EDGE 3 — anonymous request (no REQUESTER_HEADER) bypasses the check", async () => {
+    const ledgerPath = await freshLedger();
     const worker = generateIdentity();
     const engine = recordingEngine();
     const { app, jobs } = buildWorkerApp({
       identity: worker,
       engine,
+      ledgerPath,
       publishReceiptsToNostr: false,
     });
     const res = await sendChat(app, null);
@@ -324,16 +342,18 @@ describe("worker credit enforcement", () => {
   });
 
   it("EDGE 4 — enforceBalance: false disables the gate entirely", async () => {
+    const ledgerPath = await freshLedger();
     const { BOOTSTRAP_ALLOWANCE_TOKENS } = await import("@lobstah/protocol");
     const worker = generateIdentity();
     const drained = generateIdentity();
     const drainedPk = formatPubkey(drained.publicKey);
-    await drainRequester(drainedPk, BOOTSTRAP_ALLOWANCE_TOKENS + 5000); // way overdrawn
+    await drainRequester(drainedPk, BOOTSTRAP_ALLOWANCE_TOKENS + 5000, ledgerPath); // way overdrawn
 
     const engine = recordingEngine();
     const { app, jobs } = buildWorkerApp({
       identity: worker,
       engine,
+      ledgerPath,
       enforceBalance: false,
       publishReceiptsToNostr: false,
     });
@@ -345,13 +365,14 @@ describe("worker credit enforcement", () => {
   });
 
   it("EDGE 5 — sequential drain: balance decrements; 402 fires on the request that would push past 0", async () => {
+    const ledgerPath = await freshLedger();
     const { BOOTSTRAP_ALLOWANCE_TOKENS } = await import("@lobstah/protocol");
     const worker = generateIdentity();
     const requester = generateIdentity();
     const requesterPk = formatPubkey(requester.publicKey);
 
     // Drain to leave only ~50 tokens available.
-    await drainRequester(requesterPk, BOOTSTRAP_ALLOWANCE_TOKENS - 50);
+    await drainRequester(requesterPk, BOOTSTRAP_ALLOWANCE_TOKENS - 50, ledgerPath);
 
     // Mock engine that records request count + drains exactly 30 tokens
     // per call (15+15).
@@ -359,6 +380,7 @@ describe("worker credit enforcement", () => {
     const { app, jobs } = buildWorkerApp({
       identity: worker,
       engine,
+      ledgerPath,
       publishReceiptsToNostr: false,
     });
 
@@ -381,11 +403,13 @@ describe("worker credit enforcement", () => {
   });
 
   it("EDGE 6 — Sybil: each fresh identity gets its own 10K (this is the known limitation)", async () => {
+    const ledgerPath = await freshLedger();
     const worker = generateIdentity();
     const engine = recordingEngine();
     const { app, jobs } = buildWorkerApp({
       identity: worker,
       engine,
+      ledgerPath,
       publishReceiptsToNostr: false,
     });
 
