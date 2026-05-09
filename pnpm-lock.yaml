@@ -24,23 +24,23 @@ importers:
   openclaw-extension:
     dependencies:
       '@lobstah/engine-ollama':
-        specifier: 0.0.4
-        version: 0.0.4
+        specifier: 0.0.5
+        version: 0.0.5
       '@lobstah/ledger':
-        specifier: 0.0.4
-        version: 0.0.4
+        specifier: 0.0.5
+        version: 0.0.5
       '@lobstah/protocol':
-        specifier: 0.0.4
-        version: 0.0.4
+        specifier: 0.0.5
+        version: 0.0.5
       '@lobstah/router':
-        specifier: 0.0.4
-        version: 0.0.4
+        specifier: 0.0.6
+        version: 0.0.6
       '@lobstah/transport-nostr':
-        specifier: 0.0.4
-        version: 0.0.4(typescript@5.9.3)
+        specifier: 0.0.5
+        version: 0.0.5(typescript@5.9.3)
       '@lobstah/worker':
-        specifier: 0.0.4
-        version: 0.0.4
+        specifier: 0.0.5
+        version: 0.0.5
 
   packages/cli:
     dependencies:
@@ -151,6 +151,9 @@ importers:
       '@lobstah/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@lobstah/transport-nostr':
+        specifier: workspace:*
+        version: link:../transport-nostr
       hono:
         specifier: ^4.6.0
         version: 4.12.16
@@ -771,28 +774,28 @@ packages:
   '@jridgewell/trace-mapping@0.3.9':
     resolution: {integrity: sha512-3Belt6tdc8bPgAtbcmdtNJlirVoTmEb5e2gC94PnkwEW9jI6CAHUeoG85tjWP5WquqfavoMtMwiG4P926ZKKuQ==}
 
-  '@lobstah/engine-ollama@0.0.4':
-    resolution: {integrity: sha512-S2AW3D7Kcu565dNTNykDQf9CP3TwT6TwADglDjxPG+TzFDo1bB35fvPTom8Ic/x+X1o9ly+V4hvXywAjJ/9rpQ==}
+  '@lobstah/engine-ollama@0.0.5':
+    resolution: {integrity: sha512-RSWYu5b+wR8VR7HG6PVr3KSNiIZrhaLj3bZzxTtDQM/VtXA+ygqQzujcCbtzd4W1j/sbNUKE9GAkCgmq4xGHaA==}
     engines: {node: '>=20'}
 
-  '@lobstah/ledger@0.0.4':
-    resolution: {integrity: sha512-zNz1eUhC//vVpDfcs3Munno3QhL+5/llRdcAANI3y0HmY9kq+Hk0FpbFYhHCFXipB8M41mWHMiZpWWHZgjQLLg==}
+  '@lobstah/ledger@0.0.5':
+    resolution: {integrity: sha512-9+F7tNAZOJNxpytGxovBpJ9Pp9mRguIPbT6uGbWa4xuGsumwJVoRekk0aTubTn1KJiIEyJbipDW0vsOp82pBLQ==}
     engines: {node: '>=20'}
 
-  '@lobstah/protocol@0.0.4':
-    resolution: {integrity: sha512-Idd3MujvxFt/M4FguSaYzN6dQOOejVScBcmVfJmNKI5aMAs0d41OiArKhqvQOfuUr/4RqklIk+iBrEs0VKSyPA==}
+  '@lobstah/protocol@0.0.5':
+    resolution: {integrity: sha512-ravsDas4cH/CkIq6ZbYZh9flRzA4pOtgZD3WPxPi/4yW9zUcti4fV8hEGPPUDmaXDLWRT3oCAjkKolpd4tUKNw==}
     engines: {node: '>=20'}
 
-  '@lobstah/router@0.0.4':
-    resolution: {integrity: sha512-sHBjd8AopqxeSYkMNgwhUd2TEwQMwYVFqeDTJ8VdAjCWDYrXxBhL8qE+xdWbbrk9vtwrH07mS9ihzNluMiTsMg==}
+  '@lobstah/router@0.0.6':
+    resolution: {integrity: sha512-SzDd//XMbN2rUXw6uRdRLcIrqBepWe1hqHTwQTa2wnrQr5QD8hCjXQsB7U/khxHZohGR2Lz2JQaeM4TthiNUnQ==}
     engines: {node: '>=20'}
 
-  '@lobstah/transport-nostr@0.0.4':
-    resolution: {integrity: sha512-4+uKkMlq4IUloKes98++DKDTl9185fUvyXOfVyvT4kkLdOm+FaU/FblvonyAOEHAkrdZDbyADZcjHZHHP8W5lg==}
+  '@lobstah/transport-nostr@0.0.5':
+    resolution: {integrity: sha512-60PBDOY8vzxdvrQ4CPcIg3zuqClbZfr4VoclB7w+Z8OKlj7OjEFGQgtgjak7yBOh1CYgmvkG4TpZiw0l0VmzlQ==}
     engines: {node: '>=20'}
 
-  '@lobstah/worker@0.0.4':
-    resolution: {integrity: sha512-OnxPVu9o8IdtWkz7HdNixs5gQhhm0AGVZ+B3hUX1KGox09y169Xzd64ZyejYrZnwh+vbHAOpC/1FX7gslfOwtw==}
+  '@lobstah/worker@0.0.5':
+    resolution: {integrity: sha512-tLR8QEiDg4jK9SjJLFTwDo97wiBDRQWgJ1sdg/oxQ14k6S1lD2+JeJMxzNA+fTO21h2UJxwlYBkgtZnEesoQ3A==}
     engines: {node: '>=20'}
 
   '@noble/ciphers@2.1.1':
@@ -1742,29 +1745,29 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@lobstah/engine-ollama@0.0.4':
+  '@lobstah/engine-ollama@0.0.5':
     dependencies:
-      '@lobstah/protocol': 0.0.4
+      '@lobstah/protocol': 0.0.5
 
-  '@lobstah/ledger@0.0.4':
+  '@lobstah/ledger@0.0.5':
     dependencies:
-      '@lobstah/protocol': 0.0.4
+      '@lobstah/protocol': 0.0.5
 
-  '@lobstah/protocol@0.0.4':
+  '@lobstah/protocol@0.0.5':
     dependencies:
       '@noble/curves': 1.9.7
       zod: 3.25.76
 
-  '@lobstah/router@0.0.4':
+  '@lobstah/router@0.0.6':
     dependencies:
       '@hono/node-server': 1.19.14(hono@4.12.16)
-      '@lobstah/ledger': 0.0.4
-      '@lobstah/protocol': 0.0.4
+      '@lobstah/ledger': 0.0.5
+      '@lobstah/protocol': 0.0.5
       hono: 4.12.16
 
-  '@lobstah/transport-nostr@0.0.4(typescript@5.9.3)':
+  '@lobstah/transport-nostr@0.0.5(typescript@5.9.3)':
     dependencies:
-      '@lobstah/protocol': 0.0.4
+      '@lobstah/protocol': 0.0.5
       nostr-tools: 2.23.3(typescript@5.9.3)
       ws: 8.18.0
     transitivePeerDependencies:
@@ -1772,12 +1775,12 @@ snapshots:
       - typescript
       - utf-8-validate
 
-  '@lobstah/worker@0.0.4':
+  '@lobstah/worker@0.0.5':
     dependencies:
       '@hono/node-server': 1.19.14(hono@4.12.16)
-      '@lobstah/engine-ollama': 0.0.4
-      '@lobstah/ledger': 0.0.4
-      '@lobstah/protocol': 0.0.4
+      '@lobstah/engine-ollama': 0.0.5
+      '@lobstah/ledger': 0.0.5
+      '@lobstah/protocol': 0.0.5
       hono: 4.12.16
 
   '@noble/ciphers@2.1.1': {}

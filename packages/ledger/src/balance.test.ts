@@ -1,4 +1,5 @@
 import {
+  BOOTSTRAP_ALLOWANCE_TOKENS,
   formatPubkey,
   generateIdentity,
   type Receipt,
@@ -6,7 +7,7 @@ import {
   type SignedReceipt,
 } from "@lobstah/protocol";
 import { describe, expect, it } from "vitest";
-import { computeBalances } from "./balance.js";
+import { availableCredits, computeBalances } from "./balance.js";
 
 const make = (
   workerPk: string,
@@ -45,8 +46,52 @@ describe("computeBalances", () => {
     expect(s.totals.receipts).toBe(1);
     expect(s.totals.earned).toBe(30);
     expect(s.totals.spent).toBe(30);
-    expect(s.perPeer.get(wPk)).toEqual({ pubkey: wPk, earned: 30, spent: 0, net: 30 });
-    expect(s.perPeer.get(rPk)).toEqual({ pubkey: rPk, earned: 0, spent: 30, net: -30 });
+    expect(s.perPeer.get(wPk)).toEqual({
+      pubkey: wPk,
+      earned: 30,
+      spent: 0,
+      net: 30,
+      allowance: BOOTSTRAP_ALLOWANCE_TOKENS,
+      available: BOOTSTRAP_ALLOWANCE_TOKENS + 30,
+    });
+    expect(s.perPeer.get(rPk)).toEqual({
+      pubkey: rPk,
+      earned: 0,
+      spent: 30,
+      net: -30,
+      allowance: BOOTSTRAP_ALLOWANCE_TOKENS,
+      available: BOOTSTRAP_ALLOWANCE_TOKENS - 30,
+    });
+  });
+
+  it("availableCredits respects bootstrap allowance for unseen accounts", () => {
+    const fresh = generateIdentity();
+    const freshPk = formatPubkey(fresh.publicKey);
+    expect(availableCredits(freshPk, [])).toBe(BOOTSTRAP_ALLOWANCE_TOKENS);
+  });
+
+  it("availableCredits decrements after spending", () => {
+    const worker = generateIdentity();
+    const requester = generateIdentity();
+    const wPk = formatPubkey(worker.publicKey);
+    const rPk = formatPubkey(requester.publicKey);
+    const signed = signReceipt(make(wPk, rPk, 100, 200, "j1"), worker.secretKey);
+    expect(availableCredits(rPk, [signed])).toBe(BOOTSTRAP_ALLOWANCE_TOKENS - 300);
+    expect(availableCredits(wPk, [signed])).toBe(BOOTSTRAP_ALLOWANCE_TOKENS + 300);
+  });
+
+  it("availableCredits floors at zero in spirit (caller decides cutoff)", () => {
+    // We don't clip at 0 here — we let the caller decide. But verify
+    // the math goes negative when overspent.
+    const worker = generateIdentity();
+    const requester = generateIdentity();
+    const wPk = formatPubkey(worker.publicKey);
+    const rPk = formatPubkey(requester.publicKey);
+    const huge = signReceipt(
+      make(wPk, rPk, BOOTSTRAP_ALLOWANCE_TOKENS, 1000, "huge"),
+      worker.secretKey,
+    );
+    expect(availableCredits(rPk, [huge])).toBe(-1000);
   });
 
   it("excludes receipts with bad signatures", () => {

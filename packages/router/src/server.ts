@@ -2,6 +2,7 @@ import { serve } from "@hono/node-server";
 import { append, computeBalances, readAll } from "@lobstah/ledger";
 import {
   assertSafeUrl,
+  BOOTSTRAP_ALLOWANCE_TOKENS,
   ChatCompletionRequestSchema,
   type Identity,
   isReceiptFresh,
@@ -113,6 +114,11 @@ type UpstreamAttempt = {
   upstream?: Response;
   peer?: Peer;
   errors: { peer: string; message: string }[];
+  // Set when a worker returned a 4xx that's the same regardless of
+  // peer (insufficient credit, malformed request, etc.). The router
+  // short-circuits the fallback loop and surfaces this status to
+  // the client directly.
+  fatal?: { status: number; body: string; peer: string };
 };
 
 const openUpstreamWithFallback = async (
@@ -145,6 +151,19 @@ const openUpstreamWithFallback = async (
       });
       if (!r.ok) {
         const text = await r.text().catch(() => "");
+        // 402 (insufficient_credit), 400 (malformed request), and
+        // related 4xx-bad-input cases will fail at every peer
+        // identically — no point trying the next worker. Short-
+        // circuit the fallback so the client sees the real error.
+        // 5xx + connect failures still fall through (those are
+        // worker-specific transient issues).
+        if (r.status >= 400 && r.status < 500) {
+          markSucceeded(peer.pubkey); // not the worker's fault
+          return {
+            errors,
+            fatal: { status: r.status, body: text, peer: peer.pubkey.slice(0, 16) },
+          };
+        }
         markFailed(peer.pubkey);
         errors.push({
           peer: peer.pubkey.slice(0, 16),
@@ -174,15 +193,22 @@ export const buildRouterApp = (opts: BuildRouterAppOptions): RouterApp => {
 
   app.get("/balance", async (c) => {
     const summary = computeBalances(await readAll());
+    const self = summary.perPeer.get(ourPubkey) ?? {
+      pubkey: ourPubkey,
+      earned: 0,
+      spent: 0,
+      net: 0,
+      allowance: BOOTSTRAP_ALLOWANCE_TOKENS,
+      available: BOOTSTRAP_ALLOWANCE_TOKENS,
+    };
     return c.json({
       pubkey: ourPubkey,
       totals: summary.totals,
-      self:
-        summary.perPeer.get(ourPubkey) ??
-        { pubkey: ourPubkey, earned: 0, spent: 0, net: 0 },
+      self,
       perPeer: Array.from(summary.perPeer.values()).sort(
-        (a, b) => b.earned + b.spent - (a.earned + a.spent),
+        (a, b) => b.available - a.available,
       ),
+      bootstrapAllowance: BOOTSTRAP_ALLOWANCE_TOKENS,
     });
   });
 
@@ -265,11 +291,19 @@ export const buildRouterApp = (opts: BuildRouterAppOptions): RouterApp => {
     // self-tagged "interactive" but fall through if none exist.
     const tierPreferred = await preferTier(candidates, "interactive");
     const ordered = orderCandidates(tierPreferred);
-    const { upstream, peer, errors } = await openUpstreamWithFallback(
-      ordered,
-      parsed.data,
-      ourPubkey,
-    );
+    const attempt = await openUpstreamWithFallback(ordered, parsed.data, ourPubkey);
+
+    // Worker-emitted 4xx (insufficient_credit, bad request, etc.)
+    // means every peer would respond the same way — surface the
+    // exact status + body to the client.
+    if (attempt.fatal) {
+      return new Response(attempt.fatal.body, {
+        status: attempt.fatal.status,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    const { upstream, peer, errors } = attempt;
 
     if (!upstream || !peer) {
       return c.json(

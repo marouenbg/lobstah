@@ -20,3 +20,14 @@ export const LOBSTAH_D_TAG = "lobstah-peer";
 
 // Tag also marking the announcement so subscribers can filter cheaply.
 export const LOBSTAH_T_TAG = "lobstah";
+
+// Custom event "kind" for lobstah signed-receipt records.
+// Range 1000-9999 is the "regular" range per NIP-01: relays SHOULD
+// keep these indefinitely (vs replaceable kinds, which only retain
+// the latest per (kind, pubkey, d-tag)). We want every receipt
+// preserved as a public record, so regular-range fits.
+export const LOBSTAH_RECEIPT_KIND = 1474;
+
+// Tag value for receipt events. Same convention as announcements
+// (`["t", "lobstah"]`) so a single subscription can filter both.
+export const LOBSTAH_RECEIPT_T_TAG = "lobstah-receipt";

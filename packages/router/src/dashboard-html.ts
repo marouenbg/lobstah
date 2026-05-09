@@ -90,9 +90,7 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
   <div class="card" style="margin-top: 16px;">
     <h2>Public accounts (top by volume)</h2>
     <div class="ledger-note">
-      Earned = compute provided · Spent = compute consumed · Net = creditor (+) or debtor (−).
-      Ranked by total volume (earned + spent). Visible accounts are limited to those this
-      node has witnessed — federation across nodes is roadmap.
+      Every account starts with a 10,000-token bootstrap allowance. Earned = compute provided · Spent = compute consumed · Available credit = allowance + earned − spent (the cap before workers refuse service). Ranked by available credit. Visible accounts are limited to those this node has witnessed; full federation via Nostr-published receipts is in the works.
     </div>
     <div id="leaderboard-content"><div class="muted">Loading…</div></div>
   </div>
@@ -159,11 +157,14 @@ function renderSelf(bal) {
   const me = bal.self;
   const netClass = me.net > 0 ? 'pos' : me.net < 0 ? 'neg' : '';
   const netSign = me.net > 0 ? '+' : '';
+  const availClass = me.available > 0 ? 'pos' : 'neg';
   document.getElementById('self-content').innerHTML = \`
     <div class="stat"><span class="stat-label">your pubkey</span><span class="stat-value muted">\${me.pubkey}</span></div>
+    <div class="stat"><span class="stat-label">bootstrap allowance</span><span class="stat-value">\${fmt(me.allowance)} tokens</span></div>
     <div class="stat"><span class="stat-label">earned (compute provided)</span><span class="stat-value">\${fmt(me.earned)} tokens</span></div>
     <div class="stat"><span class="stat-label">spent (compute consumed)</span><span class="stat-value">\${fmt(me.spent)} tokens</span></div>
-    <div class="stat"><span class="stat-label">net</span><span class="stat-value big \${netClass}">\${netSign}\${fmt(me.net)}</span></div>
+    <div class="stat"><span class="stat-label">net</span><span class="stat-value \${netClass}">\${netSign}\${fmt(me.net)}</span></div>
+    <div class="stat"><span class="stat-label">available credit (allowance + net)</span><span class="stat-value big \${availClass}">\${fmt(me.available)} tokens</span></div>
   \`;
 }
 
@@ -185,16 +186,18 @@ function renderLeaderboard(bal) {
     const isMe = p.pubkey === myPubkey;
     const netClass = p.net > 0 ? 'pos' : p.net < 0 ? 'neg' : '';
     const netSign = p.net > 0 ? '+' : '';
+    const availClass = p.available > 0 ? 'pos' : 'neg';
     return \`<tr>
       <td class="pk \${isMe ? 'you' : ''}" title="\${p.pubkey}">\${pk(p.pubkey)}\${isMe ? ' (you)' : ''}</td>
       <td class="num">\${fmt(p.earned)}</td>
       <td class="num">\${fmt(p.spent)}</td>
       <td class="num \${netClass}">\${netSign}\${fmt(p.net)}</td>
+      <td class="num \${availClass}">\${fmt(p.available)}</td>
     </tr>\`;
   }).join('');
   document.getElementById('leaderboard-content').innerHTML = \`
     <table>
-      <thead><tr><th>account</th><th class="num">earned</th><th class="num">spent</th><th class="num">net</th></tr></thead>
+      <thead><tr><th>account</th><th class="num">earned</th><th class="num">spent</th><th class="num">net</th><th class="num">available credit</th></tr></thead>
       <tbody>\${rows}</tbody>
     </table>
   \`;

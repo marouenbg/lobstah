@@ -21,6 +21,19 @@ export type SignedReceipt = {
 
 export const MAX_RECEIPT_AGE_MS = 5 * 60 * 1000;
 
+// Per-pubkey bootstrap allowance. Every account starts with this many
+// tokens of compute credit. Workers MUST refuse requests that would
+// drive a requester's balance below zero. New accounts join the
+// network with this fresh allowance — no faucet, no gatekeeper.
+//
+// Pre-alpha disclosure: this is per-pubkey, not per-human. There is
+// no Sybil resistance yet — a determined attacker can mint identities
+// to claim arbitrary credits. Sybil resistance (web of trust, PoW,
+// social attestation) is a roadmap item; the credit system here is
+// designed to be additive once it lands. For demo / hobby use, the
+// 10K allowance is "enough to feel free, not enough to abuse."
+export const BOOTSTRAP_ALLOWANCE_TOKENS = 10_000;
+
 export const generateNonce = (): string => {
   const buf = new Uint8Array(16);
   crypto.getRandomValues(buf);

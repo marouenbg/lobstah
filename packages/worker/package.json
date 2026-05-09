@@ -1,6 +1,6 @@
 {
   "name": "@lobstah/worker",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -16,6 +16,7 @@
     "@lobstah/engine-ollama": "workspace:*",
     "@lobstah/ledger": "workspace:*",
     "@lobstah/protocol": "workspace:*",
+    "@lobstah/transport-nostr": "workspace:*",
     "hono": "^4.6.0"
   },
   "description": "Provider-side HTTP server for the Lobstah grid: signs receipts, OpenAI-compat (streaming + non-streaming), optional auto-publish via Nostr or HTTP tracker.",

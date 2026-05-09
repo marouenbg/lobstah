@@ -44,6 +44,11 @@ export type JobStoreOptions = {
   // than one inference at a time (or you've fronted multiple engines
   // behind one worker).
   concurrency?: number;
+  // Optional sink for newly-signed receipts. The server uses this to
+  // publish each receipt to Nostr in the background. JobStore stays
+  // ignorant of Nostr — it just hands the signed receipt to the
+  // callback after appendLedger.
+  onReceiptSigned?: (signed: import("@lobstah/protocol").SignedReceipt) => void;
 };
 
 type InternalJob = JobRecord & {
@@ -291,6 +296,7 @@ export class JobStore {
     };
     const signed = signReceipt(receipt, this.opts.identity.secretKey);
     await appendLedger(signed);
+    this.opts.onReceiptSigned?.(signed);
 
     job.status = "done";
     job.completedAt = completedAt;
