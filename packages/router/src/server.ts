@@ -19,6 +19,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
+import { DASHBOARD_HTML } from "./dashboard-html.js";
 import { noteNonce } from "./nonce-store.js";
 import { getCapacity, markFailed, markSucceeded } from "./peer-state.js";
 import { loadPeers, type Peer } from "./peers.js";
@@ -179,8 +180,37 @@ export const buildRouterApp = (opts: BuildRouterAppOptions): RouterApp => {
       self:
         summary.perPeer.get(ourPubkey) ??
         { pubkey: ourPubkey, earned: 0, spent: 0, net: 0 },
+      perPeer: Array.from(summary.perPeer.values()).sort(
+        (a, b) => b.earned + b.spent - (a.earned + a.spent),
+      ),
     });
   });
+
+  // Recent receipts as a JSON feed. The `?limit=N` query caps how
+  // many of the latest receipts to return (default 50, max 500). Used
+  // by the /dashboard UI for the activity feed.
+  app.get("/ledger", async (c) => {
+    const limitRaw = c.req.query("limit");
+    const limit = Math.max(
+      1,
+      Math.min(500, Number.isFinite(Number(limitRaw)) ? Number(limitRaw) : 50),
+    );
+    const all = await readAll();
+    const slice = all.slice(-limit).reverse();
+    return c.json({
+      total: all.length,
+      returned: slice.length,
+      receipts: slice,
+    });
+  });
+
+  // Browser-friendly dashboard. Single-file static HTML that
+  // self-fetches /balance, /peers, /ledger, /v1/models from the same
+  // origin. No build pipeline, no npm dep — vanilla JS so the router
+  // tarball stays small. For polymarket-style "browseable public
+  // accounts" this is the v1; per-account drill-down + cross-node
+  // federation are roadmap.
+  app.get("/dashboard", (c) => c.html(DASHBOARD_HTML));
 
   app.get("/v1/models", async (c) => {
     const peers = await loadPeers();
